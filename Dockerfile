@@ -1,18 +1,28 @@
-FROM node:22.14.0-alpine
+# Multi-stage build for smaller image
+FROM oven/bun:1 AS builder
 
 WORKDIR /app
 
 # Copy package files
-COPY package.json package-lock.json ./
+COPY package.json bun.lock* ./
 
-# Install pnpm and dependencies
-RUN npm install
+# Install dependencies
+RUN bun install --frozen-lockfile
 
 # Copy application code
 COPY . .
 
 # Build TypeScript
-RUN npm run build
+RUN bun run build
+
+# Production stage
+FROM oven/bun:1-slim
+
+WORKDIR /app
+
+# Copy only necessary files from builder
+COPY --from=builder /app/dist ./dist
+COPY --from=builder /app/package.json ./
 
 # Command will be provided by smithery.yaml
-CMD ["node", "dist/index.js"] 
+CMD ["bun", "dist/index.js"] 
