@@ -6,6 +6,40 @@ import { Logger } from "./logger.js";
 
 const logger = new Logger("CallbackServer");
 
+// Default max body size: 1MB (Requirement A2.1)
+const DEFAULT_MAX_BODY_SIZE = 1048576;
+
+/**
+ * Get the maximum body size from environment variable or use default
+ * Requirement A2.2: Support MAX_BODY_SIZE env variable
+ */
+export function getMaxBodySize(): number {
+  const envValue = process.env.MAX_BODY_SIZE;
+  if (envValue) {
+    const parsed = parseInt(envValue, 10);
+    if (!isNaN(parsed) && parsed > 0) {
+      return parsed;
+    }
+    logger.warn(`Invalid MAX_BODY_SIZE value: ${envValue}, using default: ${DEFAULT_MAX_BODY_SIZE}`);
+  }
+  return DEFAULT_MAX_BODY_SIZE;
+}
+
+/**
+ * Custom error for body size limit exceeded
+ */
+export class BodyTooLargeError extends Error {
+  public readonly limit: number;
+  public readonly received: number;
+
+  constructor(limit: number, received: number) {
+    super(`Payload too large: received ${received} bytes, limit is ${limit} bytes`);
+    this.name = "BodyTooLargeError";
+    this.limit = limit;
+    this.received = received;
+  }
+}
+
 export interface CallbackResponse {
   data?: string;
   timedOut?: boolean;
@@ -50,10 +84,36 @@ export class CallbackServer {
     });
   }
 
+  /**
+   * Parse request body with size limit enforcement
+   * Requirements A2.1-A2.4: Body size limiting
+   */
   private parseBody(req: IncomingMessage): Promise<string> {
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
+      const maxBodySize = getMaxBodySize();
       let body = "";
-      req.on("data", (chunk) => (body += chunk.toString()));
+      let currentSize = 0;
+
+      req.on("data", (chunk: Buffer) => {
+        currentSize += chunk.length;
+        
+        // Requirement A2.4: Abort reading once limit exceeded
+        if (currentSize > maxBodySize) {
+          req.destroy();
+          reject(new BodyTooLargeError(maxBodySize, currentSize));
+          return;
+        }
+        
+        body += chunk.toString();
+      });
+
+      req.on("error", (err) => {
+        // Handle stream errors (including destroy)
+        if (!(err instanceof BodyTooLargeError)) {
+          reject(err);
+        }
+      });
+
       req.on("end", () => resolve(body));
     });
   }
@@ -109,7 +169,21 @@ export class CallbackServer {
     }
 
     if (req.method === "POST" && req.url === "/data") {
-      const body = await this.parseBody(req);
+      let body: string;
+      try {
+        body = await this.parseBody(req);
+      } catch (err) {
+        // Requirement A2.3: Return 413 Payload Too Large
+        if (err instanceof BodyTooLargeError) {
+          logger.warn(`Body size limit exceeded from IP: ${clientIp}, limit: ${err.limit}, received: ${err.received}`);
+          res.writeHead(413, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "Payload too large", limit: err.limit }));
+          return;
+        }
+        // Re-throw other errors
+        throw err;
+      }
+      
       logger.info(`Received POST /data with ${body.length} bytes from IP: ${clientIp}`);
       
       if (this.promiseResolve) {
