@@ -4,14 +4,59 @@ This guide is specifically designed for AI agents like Cline to install and conf
 
 ## Prerequisites
 
-1. Node.js (Latest LTS version)
-2. A valid TWENTY_FIRST_API_KEY from [21st.dev/magic](https://21st.dev/magic)
+**Option A: Bun (Recommended)**
+- Bun >= 1.0.0 ([install guide](https://bun.sh/docs/installation))
+- A valid TWENTY_FIRST_API_KEY from [21st.dev/magic](https://21st.dev/magic)
+
+**Option B: Node.js**
+- Node.js >= 18.0.0 (LTS version recommended)
+- A valid TWENTY_FIRST_API_KEY from [21st.dev/magic](https://21st.dev/magic)
 
 ## Installation Steps
 
 ### 1. Configuration Setup
 
 The Magic MCP server requires configuration based on the client type. Below are the setup instructions for each supported client:
+
+#### For Kiro IDE (Bun)
+
+1. Create or modify the configuration file at `.kiro/settings/mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "magic": {
+      "command": "bun",
+      "args": ["x", "@lucascouts/21st.dev@latest"],
+      "env": {
+        "TWENTY_FIRST_API_KEY": "<API_KEY>"
+      }
+    }
+  }
+}
+```
+
+2. Replace `<API_KEY>` with the actual TWENTY_FIRST_API_KEY value.
+
+#### For Kiro IDE (Node.js)
+
+1. Create or modify the configuration file at `.kiro/settings/mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "magic": {
+      "command": "npx",
+      "args": ["-y", "@lucascouts/21st.dev@latest"],
+      "env": {
+        "TWENTY_FIRST_API_KEY": "<API_KEY>"
+      }
+    }
+  }
+}
+```
+
+2. Replace `<API_KEY>` with the actual TWENTY_FIRST_API_KEY value.
 
 #### For Windsurf
 
@@ -79,9 +124,8 @@ To verify the installation:
 Common issues and solutions:
 
 1. If the server fails to start:
-
    - Verify the API key is valid
-   - Check Node.js version (should be LTS)
+   - Check runtime version (Bun >= 1.0.0 or Node.js >= 18.0.0)
    - Ensure all dependencies are installed
 
 2. If components fail to generate:
@@ -91,15 +135,20 @@ Common issues and solutions:
 
 ## Environment Variables
 
-Required environment variables:
-
-- `TWENTY_FIRST_API_KEY`: Your Magic API key from 21st.dev
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `TWENTY_FIRST_API_KEY` | Your Magic API key from 21st.dev (required) | - |
+| `LOG_LEVEL` | Logging verbosity: `debug`, `info`, `warn`, `error` | `info` |
+| `MAX_FILE_SIZE` | Maximum file size for processing (bytes) | `10485760` |
+| `TWENTY_FIRST_TIMEOUT` | API request timeout (milliseconds) | `30000` |
+| `DEBUG` | Enable debug mode (`true`/`false`) | `false` |
 
 ## Additional Notes
 
 - The server automatically handles TypeScript and React components
 - No additional configuration is needed for basic usage
 - The server supports hot reloading for development
+- Bun runtime provides faster startup and execution
 
 ## Support
 

@@ -11,7 +11,17 @@ startCommand:
       TWENTY_FIRST_API_KEY:
         type: string
         description: "The API key from https://21st.dev/magic/console"
+      runtime:
+        type: string
+        enum: ["bun", "node"]
+        default: "node"
+        description: "Runtime to use (bun recommended for faster execution)"
   commandFunction:
     # A function that produces the CLI command to start the MCP on stdio.
+    # Supports both Bun and Node.js runtimes
     |-
-    (config) => ({ command: 'node', args: ['dist/index.js'], env: { TWENTY_FIRST_API_KEY: config.TWENTY_FIRST_API_KEY } })
+    (config) => ({ 
+      command: config.runtime === 'bun' ? 'bun' : 'node', 
+      args: ['dist/index.js'], 
+      env: { TWENTY_FIRST_API_KEY: config.TWENTY_FIRST_API_KEY } 
+    })

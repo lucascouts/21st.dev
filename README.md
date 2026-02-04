@@ -1,5 +1,9 @@
 # Magic MCP (Kiro-Compatible Fork)
 
+[![npm version](https://img.shields.io/npm/v/@lucascouts/21st.dev.svg)](https://www.npmjs.com/package/@lucascouts/21st.dev)
+[![CI](https://github.com/lucascouts/21st.dev/actions/workflows/ci.yml/badge.svg)](https://github.com/lucascouts/21st.dev/actions/workflows/ci.yml)
+[![License: ISC](https://img.shields.io/badge/License-ISC-blue.svg)](https://opensource.org/licenses/ISC)
+
 Fork of [21st-dev/magic-mcp](https://github.com/21st-dev/magic-mcp) with fixes for Kiro IDE compatibility.
 
 ## Changes from Original
@@ -59,12 +63,34 @@ Add to `.kiro/settings/mcp.json`:
 2. Sign up / Sign in
 3. Navigate to settings to get your API key
 
+## Environment Variables
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `API_KEY` | Your 21st.dev API key (required) | - |
+| `TWENTY_FIRST_API_KEY` | Alternative name for API key | - |
+| `LOG_LEVEL` | Logging verbosity: `debug`, `info`, `warn`, `error` | `info` |
+| `MAX_FILE_SIZE` | Maximum file size for processing (bytes) | `10485760` (10MB) |
+| `TWENTY_FIRST_TIMEOUT` | API request timeout (milliseconds) | `30000` (30s) |
+| `DEBUG` | Enable debug mode (`true`/`false`) | `false` |
+
 ## Development
+
+### With Bun (Recommended)
+
+```bash
+bun install
+bun run build
+bun test
+bun run dev  # watch mode
+```
+
+### With Node.js
 
 ```bash
 npm install
-npm run build
-npm run dev  # watch mode
+npm run build:node
+npm run start:node
 ```
 
 ## License
