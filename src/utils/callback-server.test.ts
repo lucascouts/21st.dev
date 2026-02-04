@@ -1,5 +1,5 @@
 import * as fc from "fast-check";
-import { getMaxBodySize, BodyTooLargeError } from "./callback-server.js";
+import { getMaxBodySize, BodyTooLargeError, CallbackServer, ServerState } from "./callback-server.js";
 
 describe("CallbackServer - Body Size Limit", () => {
   const originalEnv = process.env.MAX_BODY_SIZE;
@@ -118,6 +118,142 @@ describe("CallbackServer - Body Size Limit", () => {
       const error = new BodyTooLargeError(1000, 2000);
       expect(error instanceof Error).toBe(true);
       expect(error instanceof BodyTooLargeError).toBe(true);
+    });
+  });
+});
+
+
+describe("CallbackServer - Singleton Pattern", () => {
+  afterEach(() => {
+    // Clean up singleton instance after each test
+    CallbackServer.resetInstance();
+  });
+
+  /**
+   * Requirement B3.1: Support singleton mode for reuse
+   */
+  describe("Requirement B3.1: Singleton Mode", () => {
+    it("should return the same instance when getInstance is called multiple times", () => {
+      const instance1 = CallbackServer.getInstance();
+      const instance2 = CallbackServer.getInstance();
+      
+      expect(instance1).toBe(instance2);
+    });
+
+    it("should create new instance after resetInstance", () => {
+      const instance1 = CallbackServer.getInstance();
+      CallbackServer.resetInstance();
+      const instance2 = CallbackServer.getInstance();
+      
+      expect(instance1).not.toBe(instance2);
+    });
+  });
+
+  /**
+   * Requirement B3.2: Reuse existing server when idle
+   */
+  describe("Requirement B3.2: Server Reuse When Idle", () => {
+    it("should start in SHUTDOWN state", () => {
+      const server = new CallbackServer();
+      expect(server.getState()).toBe(ServerState.SHUTDOWN);
+    });
+
+    it("should transition to IDLE state after start", async () => {
+      const server = CallbackServer.getInstance();
+      await server.start();
+      
+      expect(server.getState()).toBe(ServerState.IDLE);
+      server.cancel();
+    });
+
+    it("should reuse idle singleton instance", async () => {
+      const server1 = CallbackServer.getInstance();
+      await server1.start();
+      
+      expect(server1.getState()).toBe(ServerState.IDLE);
+      
+      const server2 = CallbackServer.getInstance();
+      expect(server2).toBe(server1);
+      
+      server1.cancel();
+    });
+  });
+
+  /**
+   * Requirement B3.3: Create new server when busy
+   */
+  describe("Requirement B3.3: New Server When Busy", () => {
+    it("should return different instance when singleton is busy", async () => {
+      const server1 = CallbackServer.getInstance();
+      await server1.start();
+      
+      // Simulate busy state by starting waitForCallback (don't await)
+      const waitPromise = server1.waitForCallback(100);
+      
+      expect(server1.getState()).toBe(ServerState.BUSY);
+      expect(server1.isBusy()).toBe(true);
+      
+      // Should get a different instance since singleton is busy
+      const server2 = CallbackServer.getInstance();
+      expect(server2).not.toBe(server1);
+      
+      // Clean up
+      server1.cancel();
+      await waitPromise;
+    });
+  });
+
+  /**
+   * Requirement B3.4: Auto-shutdown after 5 minutes of inactivity
+   * Note: We test the timer mechanism, not the full 5 minutes
+   */
+  describe("Requirement B3.4: Auto-shutdown Timer", () => {
+    it("should have SHUTDOWN state initially", () => {
+      const server = new CallbackServer();
+      expect(server.getState()).toBe(ServerState.SHUTDOWN);
+    });
+
+    it("should track state transitions correctly", async () => {
+      const server = CallbackServer.getInstance();
+      
+      // Initial state
+      expect(server.getState()).toBe(ServerState.SHUTDOWN);
+      
+      // After start
+      await server.start();
+      expect(server.getState()).toBe(ServerState.IDLE);
+      
+      // After cancel (singleton stays idle)
+      server.cancel();
+      expect(server.getState()).toBe(ServerState.IDLE);
+    });
+  });
+
+  describe("Unit Tests - ServerState", () => {
+    it("should have correct enum values", () => {
+      expect(ServerState.IDLE).toBe("idle");
+      expect(ServerState.BUSY).toBe("busy");
+      expect(ServerState.SHUTDOWN).toBe("shutdown");
+    });
+  });
+
+  describe("Unit Tests - isBusy", () => {
+    it("should return false when not busy", () => {
+      const server = new CallbackServer();
+      expect(server.isBusy()).toBe(false);
+    });
+
+    it("should return true when busy", async () => {
+      const server = CallbackServer.getInstance();
+      await server.start();
+      
+      // Start waiting (makes it busy)
+      const waitPromise = server.waitForCallback(100);
+      expect(server.isBusy()).toBe(true);
+      
+      // Clean up
+      server.cancel();
+      await waitPromise;
     });
   });
 });

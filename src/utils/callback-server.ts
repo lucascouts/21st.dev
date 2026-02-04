@@ -10,6 +10,19 @@ const logger = new Logger("CallbackServer");
 // Default max body size: 1MB (Requirement A2.1)
 const DEFAULT_MAX_BODY_SIZE = 1048576;
 
+// Inactivity timeout: 5 minutes (Requirement B3.4)
+const INACTIVITY_TIMEOUT_MS = 5 * 60 * 1000;
+
+/**
+ * Server state for singleton pattern
+ * Requirement B3.1-B3.4: Callback server reuse
+ */
+export enum ServerState {
+  IDLE = "idle",
+  BUSY = "busy",
+  SHUTDOWN = "shutdown",
+}
+
 /**
  * Get the maximum body size from environment variable or use default
  * Requirement A2.2: Support MAX_BODY_SIZE env variable
@@ -47,6 +60,9 @@ export interface CallbackResponse {
 }
 
 export class CallbackServer {
+  // Singleton instance (Requirement B3.1)
+  private static instance: CallbackServer | null = null;
+
   private server: Server | null = null;
   private port: number;
   private timeoutId?: NodeJS.Timeout;
@@ -54,11 +70,103 @@ export class CallbackServer {
   private rateLimiter: RateLimiter;
   private sessionTokenManager: SessionTokenManager;
   private sessionToken: string | null = null;
+  
+  // Singleton state tracking (Requirement B3.2, B3.3)
+  private state: ServerState = ServerState.SHUTDOWN;
+  private inactivityTimer?: NodeJS.Timeout;
+  private isSingletonInstance: boolean = false;
 
   constructor(port = 9221) {
     this.port = port;
     this.rateLimiter = new RateLimiter();
     this.sessionTokenManager = new SessionTokenManager();
+  }
+
+  /**
+   * Get singleton instance of CallbackServer
+   * Requirement B3.1: Support singleton mode for reuse
+   * Requirement B3.2: Reuse existing server when idle
+   * Requirement B3.3: Create new server when busy
+   */
+  static getInstance(port = 9221): CallbackServer {
+    // If no instance exists, create new singleton
+    if (!CallbackServer.instance) {
+      logger.debug("Creating new singleton CallbackServer instance");
+      CallbackServer.instance = new CallbackServer(port);
+      CallbackServer.instance.isSingletonInstance = true;
+      return CallbackServer.instance;
+    }
+
+    // If instance is busy, create a new temporary instance (Requirement B3.3)
+    if (CallbackServer.instance.state === ServerState.BUSY) {
+      logger.debug("Singleton is busy, creating temporary CallbackServer instance");
+      const tempInstance = new CallbackServer(port);
+      tempInstance.isSingletonInstance = false;
+      return tempInstance;
+    }
+
+    // For IDLE or SHUTDOWN states, reuse the singleton (Requirement B3.2)
+    // SHUTDOWN means the server hasn't been started yet or was shut down
+    // IDLE means the server is running but not processing a callback
+    logger.debug(`Reusing singleton CallbackServer instance (state: ${CallbackServer.instance.state})`);
+    if (CallbackServer.instance.state === ServerState.IDLE) {
+      CallbackServer.instance.resetInactivityTimer();
+    }
+    return CallbackServer.instance;
+  }
+
+  /**
+   * Reset singleton instance (for testing)
+   */
+  static resetInstance(): void {
+    if (CallbackServer.instance) {
+      CallbackServer.instance.shutdown();
+      CallbackServer.instance = null;
+    }
+  }
+
+  /**
+   * Get current server state
+   */
+  getState(): ServerState {
+    return this.state;
+  }
+
+  /**
+   * Check if server is busy
+   */
+  isBusy(): boolean {
+    return this.state === ServerState.BUSY;
+  }
+
+  /**
+   * Reset inactivity timer
+   * Requirement B3.4: Auto-shutdown after 5 minutes of inactivity
+   */
+  private resetInactivityTimer(): void {
+    // Clear existing timer
+    if (this.inactivityTimer) {
+      clearTimeout(this.inactivityTimer);
+      this.inactivityTimer = undefined;
+    }
+
+    // Only set timer for singleton instances
+    if (this.isSingletonInstance && this.state !== ServerState.SHUTDOWN) {
+      this.inactivityTimer = setTimeout(() => {
+        logger.info("Inactivity timeout reached, shutting down singleton server");
+        this.shutdown();
+      }, INACTIVITY_TIMEOUT_MS);
+    }
+  }
+
+  /**
+   * Stop inactivity timer
+   */
+  private stopInactivityTimer(): void {
+    if (this.inactivityTimer) {
+      clearTimeout(this.inactivityTimer);
+      this.inactivityTimer = undefined;
+    }
   }
 
   getPort(): number {
@@ -243,9 +351,21 @@ export class CallbackServer {
         // Requirement A1.5: Invalidate token after successful use
         if (this.sessionToken) {
           this.sessionTokenManager.invalidate(this.sessionToken);
+          this.sessionToken = null;
         }
-        this.promiseResolve({ data: body });
-        this.shutdown();
+        
+        // For singleton, stay running but go idle; for temp instances, shutdown
+        if (this.isSingletonInstance) {
+          const resolver = this.promiseResolve;
+          this.promiseResolve = undefined;
+          this.state = ServerState.IDLE;
+          this.resetInactivityTimer();
+          resolver({ data: body });
+        } else {
+          this.promiseResolve({ data: body });
+          this.shutdown();
+        }
+        
         res.writeHead(200, { "Content-Type": "text/plain" });
         res.end("success");
       } else {
@@ -260,6 +380,8 @@ export class CallbackServer {
   };
 
   private shutdown(): void {
+    this.state = ServerState.SHUTDOWN;
+    
     if (this.server) {
       this.server.close();
       this.server = null;
@@ -276,10 +398,27 @@ export class CallbackServer {
     this.rateLimiter.stopCleanup();
     // Stop session token manager cleanup interval
     this.sessionTokenManager.stopCleanup();
+    // Stop inactivity timer
+    this.stopInactivityTimer();
+    
+    // Clear singleton reference if this is the singleton instance
+    if (this.isSingletonInstance && CallbackServer.instance === this) {
+      CallbackServer.instance = null;
+      logger.debug("Singleton CallbackServer instance cleared");
+    }
   }
 
   // Start the server and return the port
   async start(): Promise<number> {
+    // If server is already running and idle, just return the port (reuse)
+    if (this.server && this.state === ServerState.IDLE) {
+      logger.debug("Reusing existing server on port " + this.port);
+      // Generate new session token for this callback
+      this.sessionToken = this.sessionTokenManager.generate();
+      this.resetInactivityTimer();
+      return this.port;
+    }
+    
     this.port = await this.findAvailablePort(this.port);
     
     // Requirement A1.1: Generate cryptographically random token on session start
@@ -291,11 +430,14 @@ export class CallbackServer {
       
       this.server.on("error", (error) => {
         logger.error("Server error:", error);
+        this.state = ServerState.SHUTDOWN;
         reject(error);
       });
 
       this.server.listen(this.port, "127.0.0.1", () => {
         logger.info(`Listening on http://127.0.0.1:${this.port}/data`);
+        this.state = ServerState.IDLE;
+        this.resetInactivityTimer();
         resolve(this.port);
       });
     });
@@ -307,13 +449,35 @@ export class CallbackServer {
       throw new Error("Server not started. Call start() first.");
     }
 
+    // Set state to busy while waiting for callback (Requirement B3.3)
+    this.state = ServerState.BUSY;
+    this.stopInactivityTimer();
+
     return new Promise<CallbackResponse>((resolve) => {
-      this.promiseResolve = resolve;
+      this.promiseResolve = (response: CallbackResponse) => {
+        // Set state back to idle after callback completes
+        if (this.isSingletonInstance && !response.timedOut) {
+          this.state = ServerState.IDLE;
+          this.resetInactivityTimer();
+        }
+        resolve(response);
+      };
 
       this.timeoutId = setTimeout(() => {
         logger.info("Timeout reached");
-        resolve({ timedOut: true });
-        this.shutdown();
+        // For singleton, go back to idle on timeout; for temp instances, shutdown
+        if (this.isSingletonInstance) {
+          this.state = ServerState.IDLE;
+          this.resetInactivityTimer();
+          if (this.promiseResolve) {
+            this.promiseResolve({ timedOut: true });
+          }
+        } else {
+          if (this.promiseResolve) {
+            this.promiseResolve({ timedOut: true });
+          }
+          this.shutdown();
+        }
       }, timeout);
     });
   }
@@ -322,6 +486,18 @@ export class CallbackServer {
     if (this.promiseResolve) {
       this.promiseResolve({ timedOut: true });
     }
-    this.shutdown();
+    // For singleton, go back to idle; for temp instances, shutdown
+    if (this.isSingletonInstance) {
+      this.state = ServerState.IDLE;
+      this.resetInactivityTimer();
+      // Clear the timeout and promise resolver
+      if (this.timeoutId) {
+        clearTimeout(this.timeoutId);
+        this.timeoutId = undefined;
+      }
+      this.promiseResolve = undefined;
+    } else {
+      this.shutdown();
+    }
   }
 }
