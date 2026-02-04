@@ -65,14 +65,44 @@ Add to `.kiro/settings/mcp.json`:
 
 ## Environment Variables
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `API_KEY` | Your 21st.dev API key (required) | - |
-| `TWENTY_FIRST_API_KEY` | Alternative name for API key | - |
-| `LOG_LEVEL` | Logging verbosity: `debug`, `info`, `warn`, `error` | `info` |
-| `MAX_FILE_SIZE` | Maximum file size for processing (bytes) | `10485760` (10MB) |
-| `TWENTY_FIRST_TIMEOUT` | API request timeout (milliseconds) | `30000` (30s) |
-| `DEBUG` | Enable debug mode (`true`/`false`) | `false` |
+### Configuration Priority
+
+Magic MCP resolves configuration values in the following priority order (highest to lowest):
+
+1. **CLI Arguments** - Command-line flags and arguments passed when starting the server
+2. **Environment Variables** - Values set in your shell or MCP configuration
+3. **Defaults** - Built-in default values
+
+Example: If you set `API_KEY` both as an environment variable and as a CLI argument, the CLI argument value will be used.
+
+### Available Environment Variables
+
+| Variable | Description | Default | Required |
+|----------|-------------|---------|----------|
+| `API_KEY` | Your 21st.dev API key | - | Yes |
+| `TWENTY_FIRST_API_KEY` | Alternative name for API key | - | No |
+| `LOG_LEVEL` | Logging verbosity: `debug`, `info`, `warn`, `error` | `info` | No |
+| `MAX_FILE_SIZE` | Maximum file size for processing (bytes) | `10485760` (10MB) | No |
+| `TWENTY_FIRST_TIMEOUT` | API request timeout (milliseconds) | `30000` (30s) | No |
+| `DEBUG` | Enable debug mode (`true`/`false`) | `false` | No |
+| `CACHE_TTL` | Cache entry time-to-live (seconds) | `300` (5 min) | No |
+| `MAX_BODY_SIZE` | Maximum request body size (bytes) | `1048576` (1MB) | No |
+
+### CLI Arguments
+
+You can also pass configuration via command-line arguments:
+
+```bash
+# API Key
+node dist/index.js API_KEY=your-key
+node dist/index.js --API_KEY=your-key
+
+# Feature flags
+node dist/index.js --canvas
+node dist/index.js --github
+```
+
+**Note:** CLI arguments take precedence over environment variables.
 
 ## Development
 
