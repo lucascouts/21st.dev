@@ -5,6 +5,59 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] - 2026-02-04
+
+### Added
+
+#### Security
+- Session token validation for callback requests (CSRF/replay attack prevention)
+- Request body size limits (default 1MB, configurable via MAX_BODY_SIZE)
+- Log sanitization for API keys, tokens, and sensitive headers
+- SessionTokenManager for cryptographic token generation and validation
+
+#### Performance
+- API response caching with LRU eviction (default 100 entries, 5min TTL)
+- Parallel SVG fetching in logo search (concurrency limit: 5)
+- Callback server singleton pattern for reuse across tool calls
+- ApiCache utility with configurable TTL and statistics tracking
+
+#### Architecture
+- BrowserDetector module extracted from CreateUiTool
+- Standardized error response format across all tools
+- Health check tool (`magic_health_check`) for monitoring server status
+- Configuration documentation with priority order (CLI > Env > Defaults)
+
+#### Testing
+- Property-based tests for session token uniqueness (Property A1)
+- Property-based tests for log redaction completeness (Property A4)
+- Property-based tests for cache hit determinism (Property B1)
+- Property-based tests for error format consistency (Property C1)
+- Property-based tests for parallel fetch independence (Property B3)
+- Comprehensive unit tests for all new utilities
+
+### Changed
+
+- BaseTool enhanced with `formatError()` and `generateErrorCode()` methods
+- All tools updated to use standardized error responses
+- CreateUiTool refactored to use BrowserDetector module
+- LogoSearchTool updated with parallel fetching and partial failure handling
+- CallbackServer enhanced with session tokens and body size limits
+- Logger integrated with LogSanitizer for automatic redaction
+
+### Security
+
+- All callback requests now require valid session tokens
+- Request bodies limited to prevent DoS attacks
+- Sensitive data automatically redacted from logs
+- API keys, tokens, and credentials protected in all log output
+
+### Performance
+
+- Repeated API requests served from cache (up to 5min TTL)
+- Logo searches complete faster with parallel SVG fetching
+- Callback server reuse reduces port allocation overhead
+- Cache hit rates tracked for monitoring
+
 ## [1.0.0] - 2026-02-04
 
 ### Added
