@@ -10,6 +10,7 @@ import { CreateUiTool } from "./tools/create-ui.js";
 import { FetchUiTool } from "./tools/fetch-ui.js";
 import { LogoSearchTool } from "./tools/logo-search.js";
 import { RefineUiTool } from "./tools/refine-ui.js";
+import { HealthCheckTool } from "./tools/health-check.js";
 
 setupJsonConsole();
 
@@ -26,6 +27,7 @@ new CreateUiTool().register(server);
 new LogoSearchTool().register(server);
 new FetchUiTool().register(server);
 new RefineUiTool().register(server);
+new HealthCheckTool().register(server);
 
 async function runServer() {
   const transport = new StdioServerTransport();
