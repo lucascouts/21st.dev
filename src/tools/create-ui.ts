@@ -5,6 +5,11 @@ import { CallbackServer } from "../utils/callback-server.js";
 import { getContentOfFile } from "../utils/get-content-of-file.js";
 import { ShellSanitizer } from "../utils/shell-sanitizer.js";
 import { Logger } from "../utils/logger.js";
+import {
+  BrowserDetector,
+  resetDisplayEnvCache,
+  resetBrowserCache,
+} from "../utils/browser-detector.js";
 
 const logger = new Logger("CreateUI");
 const UI_TOOL_NAME = "magic_component_builder";
@@ -14,40 +19,27 @@ This tool ONLY returns the text snippet for that UI component.
 After calling this tool, you must edit or add files to integrate the snippet into the codebase."
 `;
 
-/**
- * Cache for display environment detection (Requirements 10.2, 10.3)
- * Cached once per process lifetime to avoid repeated detection overhead
- */
-interface DisplayEnvCache {
-  env: Record<string, string>;
-  detectedAt: number;
-}
-
-interface BrowserCache {
-  browser: string | null;
-  detectedAt: number;
-}
-
-let displayEnvCache: DisplayEnvCache | null = null;
-let browserCache: BrowserCache | null = null;
+// Re-export for backward compatibility (Requirement C1.4)
+export { resetDisplayEnvCache, resetBrowserCache };
 
 /**
- * Exported for testing purposes - allows resetting the cache
+ * Get display environment cache state (for testing)
+ * @deprecated Use BrowserDetector.getCacheState() instead
  */
-export function resetDisplayEnvCache(): void {
-  displayEnvCache = null;
+export function getDisplayEnvCacheState(): { env: Record<string, string>; detectedAt: number } | null {
+  const cache = BrowserDetector.getCacheState();
+  if (!cache?.displayEnv) return null;
+  return { env: cache.displayEnv as Record<string, string>, detectedAt: cache.detectedAt };
 }
 
-export function resetBrowserCache(): void {
-  browserCache = null;
-}
-
-export function getDisplayEnvCacheState(): DisplayEnvCache | null {
-  return displayEnvCache;
-}
-
-export function getBrowserCacheState(): BrowserCache | null {
-  return browserCache;
+/**
+ * Get browser cache state (for testing)
+ * @deprecated Use BrowserDetector.getCacheState() instead
+ */
+export function getBrowserCacheState(): { browser: string | null; detectedAt: number } | null {
+  const cache = BrowserDetector.getCacheState();
+  if (!cache) return null;
+  return { browser: cache.defaultBrowser, detectedAt: cache.detectedAt };
 }
 
 interface CreateUiResponse {
@@ -122,157 +114,6 @@ export class CreateUiTool extends BaseTool {
     return this.fallbackToApi(message, searchQuery, absolutePathToCurrentFile);
   }
 
-  /**
-   * Detects and returns display environment variables for X11 or Wayland
-   * Reads from /proc to get the actual display session variables
-   * Results are cached for the lifetime of the process (Requirements 10.2, 10.3)
-   */
-  private async getDisplayEnv(): Promise<Record<string, string>> {
-    // Return cached result if available
-    if (displayEnvCache !== null) {
-      return displayEnvCache.env;
-    }
-
-    const fs = await import("fs");
-    const env: Record<string, string> = {};
-    
-    // Get current user ID
-    const uid = process.getuid?.() || 1000;
-    
-    // Default values
-    env.HOME = process.env.HOME || `/home/${process.env.USER || 'user'}`;
-    env.XDG_RUNTIME_DIR = process.env.XDG_RUNTIME_DIR || `/run/user/${uid}`;
-    
-    // CRITICAL: D-Bus session bus address is required for xdg-open to work
-    env.DBUS_SESSION_BUS_ADDRESS = process.env.DBUS_SESSION_BUS_ADDRESS || `unix:path=/run/user/${uid}/bus`;
-    
-    // Try to detect display type from loginctl or environment
-    try {
-      const { execSync } = await import("child_process");
-      
-      // Try to get session type from loginctl
-      try {
-        const sessionType = execSync("loginctl show-session $(loginctl | grep $(whoami) | awk '{print $1}') -p Type --value 2>/dev/null", {
-          encoding: "utf-8",
-          timeout: 2000,
-        }).trim();
-        
-        if (sessionType) {
-          env.XDG_SESSION_TYPE = sessionType;
-        }
-      } catch {
-        // Fallback: check for Wayland socket
-        const waylandSocket = `${env.XDG_RUNTIME_DIR}/wayland-0`;
-        if (fs.existsSync(waylandSocket)) {
-          env.XDG_SESSION_TYPE = "wayland";
-        } else {
-          env.XDG_SESSION_TYPE = "x11";
-        }
-      }
-      
-      // Set display variables based on session type
-      if (env.XDG_SESSION_TYPE === "wayland") {
-        env.WAYLAND_DISPLAY = process.env.WAYLAND_DISPLAY || "wayland-0";
-        // Wayland sessions often also have XWayland with DISPLAY
-        env.DISPLAY = process.env.DISPLAY || ":0";
-      } else {
-        env.DISPLAY = process.env.DISPLAY || ":0";
-      }
-      
-      // Try to read environment from a running GUI process (more reliable)
-      try {
-        const procs = fs.readdirSync("/proc").filter((p: string) => /^\d+$/.test(p));
-        for (const pid of procs.slice(0, 100)) { // Check first 100 processes
-          try {
-            const environPath = `/proc/${pid}/environ`;
-            const cmdlinePath = `/proc/${pid}/cmdline`;
-            
-            // Check if it's a GUI process (window manager, compositor, or desktop)
-            const cmdline = fs.readFileSync(cmdlinePath, "utf-8");
-            if (cmdline.includes("kwin") || cmdline.includes("gnome-shell") || 
-                cmdline.includes("Xorg") || cmdline.includes("plasma") ||
-                cmdline.includes("mutter") || cmdline.includes("sway")) {
-              const environData = fs.readFileSync(environPath, "utf-8");
-              const vars = environData.split("\0");
-              
-              for (const v of vars) {
-                if (v.startsWith("DISPLAY=")) {
-                  env.DISPLAY = v.split("=")[1];
-                }
-                if (v.startsWith("WAYLAND_DISPLAY=")) {
-                  env.WAYLAND_DISPLAY = v.split("=")[1];
-                }
-                if (v.startsWith("DBUS_SESSION_BUS_ADDRESS=")) {
-                  env.DBUS_SESSION_BUS_ADDRESS = v.split("=").slice(1).join("=");
-                }
-                if (v.startsWith("XDG_CURRENT_DESKTOP=")) {
-                  env.XDG_CURRENT_DESKTOP = v.split("=")[1];
-                }
-                if (v.startsWith("DESKTOP_SESSION=")) {
-                  env.DESKTOP_SESSION = v.split("=")[1];
-                }
-              }
-              break;
-            }
-          } catch {
-            // Skip inaccessible processes
-          }
-        }
-      } catch {
-        // /proc reading failed, use defaults
-      }
-      
-    } catch {
-      // Fallback to basic defaults
-      env.DISPLAY = ":0";
-    }
-    
-    // Cache the result for subsequent calls
-    displayEnvCache = {
-      env,
-      detectedAt: Date.now(),
-    };
-    
-    return env;
-  }
-
-  /**
-   * Detects the default web browser on Linux using xdg-settings
-   * Returns the browser name (e.g., 'firefox', 'google-chrome', 'brave') or null
-   * Results are cached for the lifetime of the process (Requirements 10.2, 10.3)
-   */
-  private async getDefaultBrowser(): Promise<string | null> {
-    // Return cached result if available
-    if (browserCache !== null) {
-      return browserCache.browser;
-    }
-
-    let browser: string | null = null;
-    
-    try {
-      const { execSync } = await import("child_process");
-      const result = execSync("xdg-settings get default-web-browser 2>/dev/null", {
-        encoding: "utf-8",
-        timeout: 2000,
-      }).trim();
-      
-      // Extract browser name from .desktop file (e.g., "firefox.desktop" -> "firefox")
-      if (result) {
-        browser = result.replace(".desktop", "").toLowerCase();
-      }
-    } catch {
-      // Ignore errors
-    }
-    
-    // Cache the result for subsequent calls
-    browserCache = {
-      browser,
-      detectedAt: Date.now(),
-    };
-    
-    return browser;
-  }
-
   private async tryBrowserCallback(query: string): Promise<string | null> {
     const fs = await import("fs");
     const { execSync, spawn } = await import("child_process");
@@ -286,12 +127,12 @@ export class CreateUiTool extends BaseTool {
     try {
       log(`Starting tryBrowserCallback`);
       
-      // Auto-detect display environment
-      const displayEnv = await this.getDisplayEnv();
+      // Auto-detect display environment using BrowserDetector (Requirement C1.4)
+      const displayEnv = await BrowserDetector.getDisplayEnv();
       log(`Detected display env: DISPLAY=${displayEnv.DISPLAY}, WAYLAND_DISPLAY=${displayEnv.WAYLAND_DISPLAY}, XDG_SESSION_TYPE=${displayEnv.XDG_SESSION_TYPE}`);
       
-      // Detect default browser
-      const defaultBrowser = await this.getDefaultBrowser();
+      // Detect default browser using BrowserDetector (Requirement C1.4)
+      const defaultBrowser = await BrowserDetector.getDefaultBrowser();
       log(`Default browser detected: ${defaultBrowser || 'unknown'}`);
       
       const server = new CallbackServer();
@@ -313,8 +154,9 @@ export class CreateUiTool extends BaseTool {
       let url: string;
       try {
         url = ShellSanitizer.sanitizeUrl(rawUrl);
-      } catch (e: any) {
-        log(`URL sanitization failed: ${e?.message || e}`);
+      } catch (e: unknown) {
+        const errorMessage = e instanceof Error ? e.message : String(e);
+        log(`URL sanitization failed: ${errorMessage}`);
         server.cancel();
         return null;
       }
@@ -409,8 +251,9 @@ export class CreateUiTool extends BaseTool {
           });
           
           browserOpened = true;
-        } catch (e: any) {
-          log(`systemd-run failed: ${e?.message || e}`);
+        } catch (e: unknown) {
+          const errorMessage = e instanceof Error ? e.message : String(e);
+          log(`systemd-run failed: ${errorMessage}`);
         }
       }
       
@@ -422,8 +265,9 @@ export class CreateUiTool extends BaseTool {
           child.unref();
           log(`xdg-open spawned with PID: ${child.pid}`);
           browserOpened = true;
-        } catch (e: any) {
-          log(`xdg-open spawn failed: ${e?.message || e}`);
+        } catch (e: unknown) {
+          const errorMessage = e instanceof Error ? e.message : String(e);
+          log(`xdg-open spawn failed: ${errorMessage}`);
         }
       }
 
@@ -434,8 +278,9 @@ export class CreateUiTool extends BaseTool {
           await open(url);
           browserOpened = true;
           log(`Launched with open package`);
-        } catch (e: any) {
-          log(`open package failed: ${e?.message || e}`);
+        } catch (e: unknown) {
+          const errorMessage = e instanceof Error ? e.message : String(e);
+          log(`open package failed: ${errorMessage}`);
         }
       }
 

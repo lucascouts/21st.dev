@@ -1,11 +1,11 @@
 import * as fc from "fast-check";
 import {
-  CreateUiTool,
   resetDisplayEnvCache,
   resetBrowserCache,
   getDisplayEnvCacheState,
   getBrowserCacheState,
 } from "./create-ui.js";
+import { BrowserDetector } from "../utils/browser-detector.js";
 
 /**
  * Property 14: Display Environment Caching
@@ -13,7 +13,7 @@ import {
  * the display environment detection SHALL be performed only once and the
  * cached result SHALL be reused for all subsequent launches.
  *
- * **Validates: Requirements 10.2, 10.3**
+ * **Validates: Requirements 10.2, 10.3, C1.1-C1.4**
  */
 describe("Property 14: Display Environment Caching", () => {
   // Reset caches before each test to ensure isolation
@@ -29,10 +29,8 @@ describe("Property 14: Display Environment Caching", () => {
 
   describe("Display Environment Cache", () => {
     it("should cache display environment after first detection", async () => {
-      const tool = new CreateUiTool();
-
-      // Access private method via any cast (for testing purposes)
-      const getDisplayEnv = (tool as any).getDisplayEnv.bind(tool);
+      // Use BrowserDetector directly (Requirement C1.4)
+      const getDisplayEnv = BrowserDetector.getDisplayEnv.bind(BrowserDetector);
 
       // First call should populate the cache
       const firstResult = await getDisplayEnv();
@@ -62,8 +60,8 @@ describe("Property 14: Display Environment Caching", () => {
             // Reset cache at the start of each property iteration
             resetDisplayEnvCache();
 
-            const tool = new CreateUiTool();
-            const getDisplayEnv = (tool as any).getDisplayEnv.bind(tool);
+            // Use BrowserDetector directly (Requirement C1.4)
+            const getDisplayEnv = BrowserDetector.getDisplayEnv.bind(BrowserDetector);
 
             // Make first call and record the result
             const firstResult = await getDisplayEnv();
@@ -103,10 +101,8 @@ describe("Property 14: Display Environment Caching", () => {
 
   describe("Browser Cache", () => {
     it("should cache browser detection after first call", async () => {
-      const tool = new CreateUiTool();
-
-      // Access private method via any cast (for testing purposes)
-      const getDefaultBrowser = (tool as any).getDefaultBrowser.bind(tool);
+      // Use BrowserDetector directly (Requirement C1.4)
+      const getDefaultBrowser = BrowserDetector.getDefaultBrowser.bind(BrowserDetector);
 
       // First call should populate the cache
       const firstResult = await getDefaultBrowser();
@@ -136,8 +132,8 @@ describe("Property 14: Display Environment Caching", () => {
             // Reset cache at the start of each property iteration
             resetBrowserCache();
 
-            const tool = new CreateUiTool();
-            const getDefaultBrowser = (tool as any).getDefaultBrowser.bind(tool);
+            // Use BrowserDetector directly (Requirement C1.4)
+            const getDefaultBrowser = BrowserDetector.getDefaultBrowser.bind(BrowserDetector);
 
             // Make first call and record the result
             const firstResult = await getDefaultBrowser();
@@ -174,38 +170,41 @@ describe("Property 14: Display Environment Caching", () => {
   });
 
   describe("Combined Caching Behavior", () => {
-    it("should maintain independent caches for display env and browser", async () => {
-      // Property: Display env and browser caches are independent
+    it("should maintain shared cache for display env and browser in BrowserDetector", async () => {
+      // Property: BrowserDetector uses a single cache for both display env and browser
+      // After calling either method, the cache is initialized
       await fc.assert(
         fc.asyncProperty(fc.boolean(), async (callDisplayFirst) => {
-          // Reset both caches at the start of each property iteration
-          resetDisplayEnvCache();
-          resetBrowserCache();
+          // Reset cache at the start of each property iteration
+          BrowserDetector.resetCache();
 
-          const tool = new CreateUiTool();
-          const getDisplayEnv = (tool as any).getDisplayEnv.bind(tool);
-          const getDefaultBrowser = (tool as any).getDefaultBrowser.bind(tool);
+          const getDisplayEnv = BrowserDetector.getDisplayEnv.bind(BrowserDetector);
+          const getDefaultBrowser = BrowserDetector.getDefaultBrowser.bind(BrowserDetector);
 
           if (callDisplayFirst) {
             await getDisplayEnv();
-            // Display cache should be populated, browser cache should be null
-            if (getDisplayEnvCacheState() === null) return false;
-            if (getBrowserCacheState() !== null) return false;
+            // Cache should be populated with displayEnv
+            const cache = BrowserDetector.getCacheState();
+            if (cache === null) return false;
+            if (cache.displayEnv === null) return false;
 
             await getDefaultBrowser();
-            // Both caches should now be populated
-            if (getDisplayEnvCacheState() === null) return false;
-            if (getBrowserCacheState() === null) return false;
+            // Cache should now have both values
+            const cacheAfter = BrowserDetector.getCacheState();
+            if (cacheAfter === null) return false;
+            if (cacheAfter.displayEnv === null) return false;
+            if (cacheAfter.defaultBrowser === undefined) return false;
           } else {
             await getDefaultBrowser();
-            // Browser cache should be populated, display cache should be null
-            if (getBrowserCacheState() === null) return false;
-            if (getDisplayEnvCacheState() !== null) return false;
+            // Cache should be populated with browser
+            const cache = BrowserDetector.getCacheState();
+            if (cache === null) return false;
 
             await getDisplayEnv();
-            // Both caches should now be populated
-            if (getDisplayEnvCacheState() === null) return false;
-            if (getBrowserCacheState() === null) return false;
+            // Cache should now have both values
+            const cacheAfter = BrowserDetector.getCacheState();
+            if (cacheAfter === null) return false;
+            if (cacheAfter.displayEnv === null) return false;
           }
 
           return true;
