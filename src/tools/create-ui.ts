@@ -297,9 +297,19 @@ export class CreateUiTool extends BaseTool {
       const server = new CallbackServer();
       const port = await server.start();
       log(`Callback server started on port ${port}`);
+      
+      // Requirement A1.2: Get session token to include in callback URL
+      const sessionToken = server.getSessionToken();
+      if (!sessionToken) {
+        log(`Failed to get session token`);
+        server.cancel();
+        return null;
+      }
+      log(`Session token generated for callback`);
 
       // Build URL and sanitize it for shell safety (Requirements 7.1, 7.2, 7.3)
-      const rawUrl = `http://21st.dev/magic-chat?q=${encodeURIComponent(query)}&mcp=true&port=${port}`;
+      // Requirement A1.2: Include token as query parameter
+      const rawUrl = `http://21st.dev/magic-chat?q=${encodeURIComponent(query)}&mcp=true&port=${port}&token=${sessionToken}`;
       let url: string;
       try {
         url = ShellSanitizer.sanitizeUrl(rawUrl);

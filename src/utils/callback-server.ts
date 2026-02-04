@@ -3,6 +3,7 @@ import net from "net";
 import { CorsHandler } from "./cors-handler.js";
 import { RateLimiter, RateLimitResult } from "./rate-limiter.js";
 import { Logger } from "./logger.js";
+import { SessionTokenManager } from "./session-token.js";
 
 const logger = new Logger("CallbackServer");
 
@@ -51,14 +52,26 @@ export class CallbackServer {
   private timeoutId?: NodeJS.Timeout;
   private promiseResolve?: (value: CallbackResponse) => void;
   private rateLimiter: RateLimiter;
+  private sessionTokenManager: SessionTokenManager;
+  private sessionToken: string | null = null;
 
   constructor(port = 9221) {
     this.port = port;
     this.rateLimiter = new RateLimiter();
+    this.sessionTokenManager = new SessionTokenManager();
   }
 
   getPort(): number {
     return this.port;
+  }
+
+  /**
+   * Get the session token for this callback session
+   * Used by tools to include token in callback URL
+   * Requirement A1.2: Token included as query parameter
+   */
+  getSessionToken(): string | null {
+    return this.sessionToken;
   }
 
   private async findAvailablePort(startPort: number, maxAttempts = 10): Promise<number> {
@@ -119,6 +132,20 @@ export class CallbackServer {
   }
 
   /**
+   * Extract token from URL query parameters
+   * Requirement A1.3: Validate token on POST /data
+   */
+  private extractTokenFromUrl(url: string | undefined): string | null {
+    if (!url) return null;
+    try {
+      const urlObj = new URL(url, "http://localhost");
+      return urlObj.searchParams.get("token");
+    } catch {
+      return null;
+    }
+  }
+
+  /**
    * Extract client IP from request
    * Handles X-Forwarded-For header and falls back to socket address
    */
@@ -168,7 +195,32 @@ export class CallbackServer {
       return;
     }
 
-    if (req.method === "POST" && req.url === "/data") {
+    if (req.method === "POST" && req.url?.startsWith("/data")) {
+      // Requirement A1.3, A1.4: Validate session token
+      const token = this.extractTokenFromUrl(req.url);
+      
+      if (!token) {
+        logger.warn(`Missing session token from IP: ${clientIp}`);
+        res.writeHead(401, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "Missing session token" }));
+        return;
+      }
+      
+      if (!this.sessionTokenManager.validate(token)) {
+        // Check if token was ever valid (expired vs invalid)
+        const tokenInfo = this.sessionTokenManager.getTokenInfo(token);
+        if (tokenInfo && Date.now() > tokenInfo.expiresAt) {
+          logger.warn(`Expired session token from IP: ${clientIp}`);
+          res.writeHead(401, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "Session token expired" }));
+        } else {
+          logger.warn(`Invalid session token from IP: ${clientIp}`);
+          res.writeHead(401, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "Invalid session token" }));
+        }
+        return;
+      }
+      
       let body: string;
       try {
         body = await this.parseBody(req);
@@ -188,6 +240,10 @@ export class CallbackServer {
       
       if (this.promiseResolve) {
         if (this.timeoutId) clearTimeout(this.timeoutId);
+        // Requirement A1.5: Invalidate token after successful use
+        if (this.sessionToken) {
+          this.sessionTokenManager.invalidate(this.sessionToken);
+        }
         this.promiseResolve({ data: body });
         this.shutdown();
         res.writeHead(200, { "Content-Type": "text/plain" });
@@ -211,13 +267,24 @@ export class CallbackServer {
     if (this.timeoutId) {
       clearTimeout(this.timeoutId);
     }
+    // Requirement A1.5: Invalidate token on session end
+    if (this.sessionToken) {
+      this.sessionTokenManager.invalidate(this.sessionToken);
+      this.sessionToken = null;
+    }
     // Stop rate limiter cleanup interval
     this.rateLimiter.stopCleanup();
+    // Stop session token manager cleanup interval
+    this.sessionTokenManager.stopCleanup();
   }
 
   // Start the server and return the port
   async start(): Promise<number> {
     this.port = await this.findAvailablePort(this.port);
+    
+    // Requirement A1.1: Generate cryptographically random token on session start
+    this.sessionToken = this.sessionTokenManager.generate();
+    logger.debug(`Generated session token for callback`);
     
     return new Promise((resolve, reject) => {
       this.server = createServer(this.handleRequest);
