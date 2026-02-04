@@ -1,9 +1,12 @@
 /**
  * Logger utility with configurable log levels via LOG_LEVEL environment variable.
  * Supports debug, info, warn, and error levels.
+ * Includes automatic sanitization of sensitive data (API keys, tokens, etc.)
  *
- * Requirements: 9.1, 9.2, 9.3, 9.4, 9.5
+ * Requirements: 9.1, 9.2, 9.3, 9.4, 9.5, A3.1
  */
+
+import { LogSanitizer } from "./log-sanitizer.js";
 
 export type LogLevel = "debug" | "info" | "warn" | "error";
 
@@ -47,10 +50,11 @@ export class Logger {
   }
 
   /**
-   * Format arguments for logging
+   * Format arguments for logging with automatic sanitization
+   * Requirement A3.1: Sanitize sensitive data before logging
    */
   private formatArgs(args: unknown[]): string {
-    return args
+    const formatted = args
       .map((arg) => {
         if (typeof arg === "object" || Array.isArray(arg)) {
           try {
@@ -62,6 +66,9 @@ export class Logger {
         return String(arg);
       })
       .join(" ");
+
+    // Sanitize the formatted string to redact sensitive data
+    return LogSanitizer.sanitize(formatted);
   }
 
   /**
