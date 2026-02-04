@@ -68,7 +68,12 @@ export class RefineUiTool extends BaseTool {
       };
     } catch (error) {
       logger.error(`Error executing tool:`, error);
-      throw error;
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      return this.formatError(
+        "Failed to refine UI component. Please try again or check your API key.",
+        this.generateErrorCode("API_ERROR"),
+        { originalError: errorMessage }
+      );
     }
   }
 }

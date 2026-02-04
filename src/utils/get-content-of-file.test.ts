@@ -42,24 +42,25 @@ describe("getContentOfFile", () => {
             // Set the environment variable
             process.env.MAX_FILE_SIZE = String(maxSize);
 
-            // Create a file that is exactly at the limit
-            const atLimitFile = path.join(tempDir, `at-limit-${maxSize}.txt`);
+            // Create files with unique names (use relative paths for getContentOfFile)
+            const atLimitFileName = `at-limit-${maxSize}.txt`;
+            const overLimitFileName = `over-limit-${maxSize}.txt`;
+            const atLimitFile = path.join(tempDir, atLimitFileName);
+            const overLimitFile = path.join(tempDir, overLimitFileName);
+            
             const atLimitContent = "x".repeat(maxSize);
-            await fs.writeFile(atLimitFile, atLimitContent);
-
-            // Create a file that exceeds the limit by 1 byte
-            const overLimitFile = path.join(tempDir, `over-limit-${maxSize}.txt`);
             const overLimitContent = "x".repeat(maxSize + 1);
+            await fs.writeFile(atLimitFile, atLimitContent);
             await fs.writeFile(overLimitFile, overLimitContent);
 
-            // File at limit should be readable
-            const atLimitResult = await getContentOfFile(atLimitFile, {
+            // File at limit should be readable (use RELATIVE path)
+            const atLimitResult = await getContentOfFile(atLimitFileName, {
               basePath: tempDir,
               validatePath: true,
             });
 
-            // File over limit should return empty string
-            const overLimitResult = await getContentOfFile(overLimitFile, {
+            // File over limit should return empty string (use RELATIVE path)
+            const overLimitResult = await getContentOfFile(overLimitFileName, {
               basePath: tempDir,
               validatePath: true,
             });
@@ -86,12 +87,13 @@ describe("getContentOfFile", () => {
 
             // Create a file sized between the two limits
             const testSize = Math.min(envSize, optionSize) + 1;
-            const testFile = path.join(tempDir, `option-test-${testSize}.txt`);
+            const testFileName = `option-test-${testSize}-${Date.now()}.txt`;
+            const testFile = path.join(tempDir, testFileName);
             const content = "x".repeat(testSize);
             await fs.writeFile(testFile, content);
 
-            // Read with explicit maxSize option
-            const result = await getContentOfFile(testFile, {
+            // Read with explicit maxSize option (use RELATIVE path)
+            const result = await getContentOfFile(testFileName, {
               basePath: tempDir,
               validatePath: true,
               maxSize: optionSize,
@@ -118,22 +120,24 @@ describe("getContentOfFile", () => {
 
       const defaultLimit = 1024 * 1024; // 1MB
 
-      // Create a file just under the default limit
-      const underLimitFile = path.join(tempDir, "under-default.txt");
+      // Create files (use relative paths for getContentOfFile)
+      const underLimitFileName = "under-default.txt";
+      const overLimitFileName = "over-default.txt";
+      const underLimitFile = path.join(tempDir, underLimitFileName);
+      const overLimitFile = path.join(tempDir, overLimitFileName);
+      
       const underLimitContent = "x".repeat(defaultLimit - 1);
-      await fs.writeFile(underLimitFile, underLimitContent);
-
-      // Create a file just over the default limit
-      const overLimitFile = path.join(tempDir, "over-default.txt");
       const overLimitContent = "x".repeat(defaultLimit + 1);
+      await fs.writeFile(underLimitFile, underLimitContent);
       await fs.writeFile(overLimitFile, overLimitContent);
 
-      const underResult = await getContentOfFile(underLimitFile, {
+      // Use RELATIVE paths
+      const underResult = await getContentOfFile(underLimitFileName, {
         basePath: tempDir,
         validatePath: true,
       });
 
-      const overResult = await getContentOfFile(overLimitFile, {
+      const overResult = await getContentOfFile(overLimitFileName, {
         basePath: tempDir,
         validatePath: true,
       });
@@ -157,11 +161,13 @@ describe("getContentOfFile", () => {
     });
 
     it("should accept valid paths within base directory", async () => {
-      const testFile = path.join(tempDir, "valid-file.txt");
+      const testFileName = "valid-file.txt";
+      const testFile = path.join(tempDir, testFileName);
       const content = "test content";
       await fs.writeFile(testFile, content);
 
-      const result = await getContentOfFile("valid-file.txt", {
+      // Use RELATIVE path
+      const result = await getContentOfFile(testFileName, {
         basePath: tempDir,
         validatePath: true,
       });

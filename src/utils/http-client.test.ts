@@ -10,10 +10,10 @@ import {
 } from "./http-client.js";
 
 describe("http-client", () => {
-  const originalEnv = process.env;
+  const originalEnv = { ...process.env };
 
   beforeEach(() => {
-    jest.resetModules();
+    // Reset environment to original state
     process.env = { ...originalEnv };
   });
 

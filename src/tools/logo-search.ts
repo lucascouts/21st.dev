@@ -134,51 +134,61 @@ export class LogoSearchTool extends BaseTool {
    * Satisfies Requirements B2.1-B2.4 and Property B3
    */
   async execute({ queries, format }: z.infer<typeof this.schema>) {
-    logger.info(`Searching: ${queries.join(", ")} (concurrency limit: ${CONCURRENCY_LIMIT})`);
+    try {
+      logger.info(`Searching: ${queries.join(", ")} (concurrency limit: ${CONCURRENCY_LIMIT})`);
 
-    // Process all queries with concurrency limit using Promise.allSettled
-    // This ensures partial failures don't affect other fetches (B2.3)
-    const settledResults = await this.processWithConcurrencyLimit(
-      queries,
-      (query) => this.processLogoQuery(query, format),
-      CONCURRENCY_LIMIT
-    );
+      // Process all queries with concurrency limit using Promise.allSettled
+      // This ensures partial failures don't affect other fetches (B2.3)
+      const settledResults = await this.processWithConcurrencyLimit(
+        queries,
+        (query) => this.processLogoQuery(query, format),
+        CONCURRENCY_LIMIT
+      );
 
-    // Map settled results to LogoResult, handling both fulfilled and rejected
-    // Satisfies B2.4: Return partial results with failed items marked
-    const results: LogoResult[] = settledResults.map((result, index) => {
-      if (result.status === "fulfilled") {
-        return result.value;
-      } else {
-        // Handle rejected promises (unexpected errors)
-        return {
-          query: queries[index],
-          success: false,
-          error: result.reason instanceof Error ? result.reason.message : String(result.reason),
-        };
-      }
-    });
+      // Map settled results to LogoResult, handling both fulfilled and rejected
+      // Satisfies B2.4: Return partial results with failed items marked
+      const results: LogoResult[] = settledResults.map((result, index) => {
+        if (result.status === "fulfilled") {
+          return result.value;
+        } else {
+          // Handle rejected promises (unexpected errors)
+          return {
+            query: queries[index],
+            success: false,
+            error: result.reason instanceof Error ? result.reason.message : String(result.reason),
+          };
+        }
+      });
 
-    // Separate successful and failed results
-    // Property B3: N-M successful results + M error markers
-    const icons = results
-      .filter((r) => r.success)
-      .map((r) => ({
-        icon: r.query,
-        code: r.content?.split("\n").slice(1).join("\n") || "",
-      }));
+      // Separate successful and failed results
+      // Property B3: N-M successful results + M error markers
+      const icons = results
+        .filter((r) => r.success)
+        .map((r) => ({
+          icon: r.query,
+          code: r.content?.split("\n").slice(1).join("\n") || "",
+        }));
 
-    const notFound = results
-      .filter((r) => !r.success)
-      .map((r) => ({
-        icon: r.query,
-        error: r.error || "Unknown error",
-      }));
+      const notFound = results
+        .filter((r) => !r.success)
+        .map((r) => ({
+          icon: r.query,
+          error: r.error || "Unknown error",
+        }));
 
-    logger.info(`Results: ${icons.length} found, ${notFound.length} failed`);
+      logger.info(`Results: ${icons.length} found, ${notFound.length} failed`);
 
-    return {
-      content: [{ type: "text" as const, text: JSON.stringify({ icons, notFound }, null, 2) }],
-    };
+      return {
+        content: [{ type: "text" as const, text: JSON.stringify({ icons, notFound }, null, 2) }],
+      };
+    } catch (error) {
+      logger.error(`Logo search error:`, error);
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      return this.formatError(
+        "Failed to search for logos. Please try again.",
+        this.generateErrorCode("SEARCH_ERROR"),
+        { originalError: errorMessage }
+      );
+    }
   }
 }

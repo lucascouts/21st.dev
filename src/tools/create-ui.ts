@@ -335,12 +335,12 @@ export class CreateUiTool extends BaseTool {
       };
     } catch (error) {
       logger.error(`API fallback error:`, error);
-      return {
-        content: [{
-          type: "text" as const,
-          text: "// Failed to create component. Please try again or check your API key.",
-        }],
-      };
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      return this.formatError(
+        "Failed to create component. Please try again or check your API key.",
+        this.generateErrorCode("API_ERROR"),
+        { originalError: errorMessage }
+      );
     }
   }
 

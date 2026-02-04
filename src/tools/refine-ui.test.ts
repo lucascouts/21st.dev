@@ -1,32 +1,21 @@
 import { RefineUiTool } from "./refine-ui.js";
-import { twentyFirstClient } from "../utils/http-client.js";
-import { getContentOfFile } from "../utils/get-content-of-file.js";
-
-// Mock the http-client module
-jest.mock("../utils/http-client.js", () => ({
-  twentyFirstClient: {
-    post: jest.fn(),
-  },
-}));
-
-// Mock the get-content-of-file module
-jest.mock("../utils/get-content-of-file.js", () => ({
-  getContentOfFile: jest.fn(),
-}));
-
-const mockedPost = twentyFirstClient.post as jest.MockedFunction<
-  typeof twentyFirstClient.post
->;
-const mockedGetContentOfFile = getContentOfFile as jest.MockedFunction<
-  typeof getContentOfFile
->;
+import * as httpClient from "../utils/http-client.js";
+import * as fileReader from "../utils/get-content-of-file.js";
 
 describe("RefineUiTool", () => {
   let tool: RefineUiTool;
+  let mockedPost: ReturnType<typeof jest.spyOn>;
+  let mockedGetContentOfFile: ReturnType<typeof jest.spyOn>;
 
   beforeEach(() => {
     tool = new RefineUiTool();
-    jest.clearAllMocks();
+    // Use spyOn instead of jest.mock to avoid module-level pollution
+    mockedPost = jest.spyOn(httpClient.twentyFirstClient, "post");
+    mockedGetContentOfFile = jest.spyOn(fileReader, "getContentOfFile");
+  });
+
+  afterEach(() => {
+    jest.restoreAllMocks();
   });
 
   describe("execute", () => {
@@ -42,10 +31,6 @@ describe("RefineUiTool", () => {
       };
     `;
 
-    /**
-     * Test successful refinement scenario
-     * Requirements: FR-3.2, FR-3.3, FR-3.4
-     */
     it("should return refined component on successful refinement", async () => {
       const mockResponse = {
         text: "Here is your refined button component with modern styling...",
@@ -70,123 +55,117 @@ describe("RefineUiTool", () => {
       });
 
       expect(result).toEqual({
-        content: [
-          {
-            type: "text",
-            text: mockResponse.text,
-          },
-        ],
+        content: [{ type: "text", text: mockResponse.text }],
       });
     });
 
-    /**
-     * Test file read error handling
-     * Requirements: FR-3.2, FR-3.3, FR-3.4
-     */
-    it("should throw error when file cannot be read", async () => {
-      const fileError = new Error("File not found");
-      mockedGetContentOfFile.mockRejectedValueOnce(fileError);
+    it("should call API even when file returns empty content", async () => {
+      // getContentOfFile returns empty string on error, doesn't throw
+      mockedGetContentOfFile.mockResolvedValueOnce("");
+      mockedPost.mockResolvedValueOnce({
+        status: 200,
+        data: { text: "Refined without file content" },
+      });
 
-      await expect(tool.execute(validInput)).rejects.toThrow("File not found");
+      const result = await tool.execute(validInput);
 
-      expect(mockedGetContentOfFile).toHaveBeenCalledWith(
-        validInput.absolutePathToRefiningFile
-      );
-      expect(mockedPost).not.toHaveBeenCalled();
+      expect(mockedPost).toHaveBeenCalledWith("/api/refine-ui", {
+        userMessage: validInput.userMessage,
+        fileContent: "",
+        context: validInput.context,
+      });
+      expect(result.content[0].text).toBe("Refined without file content");
     });
 
-    it("should throw error when file path is invalid", async () => {
-      const invalidPathError = new Error("Invalid file path");
-      mockedGetContentOfFile.mockRejectedValueOnce(invalidPathError);
+    it("should handle file read returning empty string", async () => {
+      mockedGetContentOfFile.mockResolvedValueOnce("");
+      mockedPost.mockResolvedValueOnce({
+        status: 200,
+        data: { text: "Refined" },
+      });
 
-      await expect(tool.execute(validInput)).rejects.toThrow(
-        "Invalid file path"
-      );
+      const result = await tool.execute(validInput);
+      expect(result.content[0].text).toBe("Refined");
     });
 
-    /**
-     * Test API error handling
-     * Requirements: FR-3.2, FR-3.3, FR-3.4
-     */
-    it("should throw error on non-200 status", async () => {
+    it("should return formatted error on non-200 status", async () => {
       mockedGetContentOfFile.mockResolvedValueOnce(mockFileContent);
       mockedPost.mockResolvedValueOnce({
         status: 500,
         data: { error: "Internal server error" },
       });
 
-      await expect(tool.execute(validInput)).rejects.toThrow(
-        "API returned status 500"
-      );
+      const result = await tool.execute(validInput);
+      
+      expect(result.content).toHaveLength(1);
+      expect(result.content[0].type).toBe("text");
+      
+      const errorObj = JSON.parse(result.content[0].text);
+      expect(errorObj.error).toBe("Failed to refine UI component. Please try again or check your API key.");
+      expect(errorObj.code).toBe("COMPONENT_REFINER_API_ERROR");
+      expect(errorObj.details).toBeDefined();
     });
 
-    it("should throw error on 404 status", async () => {
+    it("should return formatted error on 404 status", async () => {
       mockedGetContentOfFile.mockResolvedValueOnce(mockFileContent);
       mockedPost.mockResolvedValueOnce({
         status: 404,
         data: { error: "Not found" },
       });
 
-      await expect(tool.execute(validInput)).rejects.toThrow(
-        "API returned status 404"
-      );
+      const result = await tool.execute(validInput);
+      
+      const errorObj = JSON.parse(result.content[0].text);
+      expect(errorObj.error).toBe("Failed to refine UI component. Please try again or check your API key.");
+      expect(errorObj.code).toBe("COMPONENT_REFINER_API_ERROR");
     });
 
-    it("should throw error on 400 status", async () => {
+    it("should return formatted error on 400 status", async () => {
       mockedGetContentOfFile.mockResolvedValueOnce(mockFileContent);
       mockedPost.mockResolvedValueOnce({
         status: 400,
         data: { error: "Bad request" },
       });
 
-      await expect(tool.execute(validInput)).rejects.toThrow(
-        "API returned status 400"
-      );
+      const result = await tool.execute(validInput);
+      
+      const errorObj = JSON.parse(result.content[0].text);
+      expect(errorObj.error).toBe("Failed to refine UI component. Please try again or check your API key.");
+      expect(errorObj.code).toBe("COMPONENT_REFINER_API_ERROR");
     });
 
-    /**
-     * Test network error handling
-     * Requirements: FR-3.2, FR-3.3, FR-3.4
-     */
-    it("should propagate network errors", async () => {
+    it("should return formatted error on network errors", async () => {
       const networkError = new Error("Network connection failed");
       mockedGetContentOfFile.mockResolvedValueOnce(mockFileContent);
       mockedPost.mockRejectedValueOnce(networkError);
 
-      await expect(tool.execute(validInput)).rejects.toThrow(
-        "Network connection failed"
-      );
+      const result = await tool.execute(validInput);
+      
+      const errorObj = JSON.parse(result.content[0].text);
+      expect(errorObj.error).toBe("Failed to refine UI component. Please try again or check your API key.");
+      expect(errorObj.code).toBe("COMPONENT_REFINER_API_ERROR");
+      expect(errorObj.details?.originalError).toBe("Network connection failed");
     });
 
-    it("should propagate timeout errors", async () => {
+    it("should return formatted error on timeout errors", async () => {
       const timeoutError = new Error("Request timed out");
       mockedGetContentOfFile.mockResolvedValueOnce(mockFileContent);
       mockedPost.mockRejectedValueOnce(timeoutError);
 
-      await expect(tool.execute(validInput)).rejects.toThrow(
-        "Request timed out"
-      );
+      const result = await tool.execute(validInput);
+      
+      const errorObj = JSON.parse(result.content[0].text);
+      expect(errorObj.error).toBe("Failed to refine UI component. Please try again or check your API key.");
+      expect(errorObj.code).toBe("COMPONENT_REFINER_API_ERROR");
+      expect(errorObj.details?.originalError).toBe("Request timed out");
     });
 
-    /**
-     * Test empty context handling
-     * Requirements: FR-3.2, FR-3.3, FR-3.4
-     */
     it("should handle empty context string", async () => {
-      const inputWithEmptyContext = {
-        ...validInput,
-        context: "",
-      };
-
-      const mockResponse = {
-        text: "Refined component without specific context...",
-      };
+      const inputWithEmptyContext = { ...validInput, context: "" };
+      const mockResponse = { text: "Refined component without specific context..." };
 
       mockedGetContentOfFile.mockResolvedValueOnce(mockFileContent);
-      mockedPost.mockResolvedValueOnce({
-        status: 200,
-        data: mockResponse,
-      });
+      mockedPost.mockResolvedValueOnce({ status: 200, data: mockResponse });
 
       const result = await tool.execute(inputWithEmptyContext);
 
@@ -197,12 +176,7 @@ describe("RefineUiTool", () => {
       });
 
       expect(result).toEqual({
-        content: [
-          {
-            type: "text",
-            text: mockResponse.text,
-          },
-        ],
+        content: [{ type: "text", text: mockResponse.text }],
       });
     });
   });
