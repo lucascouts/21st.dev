@@ -6,7 +6,7 @@ Fork of [21st-dev/magic-mcp](https://github.com/21st-dev/magic-mcp) with fixes f
 
 - **Direct API calls**: Replaced browser+callback mechanism with direct API calls
 - **Gemini-compatible tool names**: Renamed tools to not start with numbers
-- **Removed dependencies**: Removed `open`, `cors`, `express` (not needed)
+- **Reduced dependencies**: Removed `cors`, `express` (not needed); `open` kept as browser fallback
 - **Better error handling**: Added fallback mechanisms and improved logging
 
 ## Tool Names

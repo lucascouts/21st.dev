@@ -15,7 +15,7 @@ setupJsonConsole();
 
 const logger = new Logger("Server");
 
-const VERSION = "0.2.0";
+const VERSION = "1.0.0";
 const server = new McpServer({
   name: "magic-mcp",
   version: VERSION,
