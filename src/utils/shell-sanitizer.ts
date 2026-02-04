@@ -131,6 +131,8 @@ export class ShellSanitizer {
   private static encodeShellMetacharsInUrl(parsedUrl: URL): string {
     // Characters that need additional encoding for shell safety
     // Note: URL constructor already encodes many special chars, but some may slip through
+    // IMPORTANT: Do NOT encode ? and & as they are valid URL query string delimiters
+    // Shell injection is prevented by using spawn() with array arguments instead of shell execution
     const shellCharsToEncode: Record<string, string> = {
       "'": "%27",
       '"': "%22",
@@ -140,7 +142,6 @@ export class ShellSanitizer {
       "!": "%21",
       "#": "%23",  // Fragment delimiter, but also shell comment
       "^": "%5E",
-      "&": "%26",
       "|": "%7C",
       ";": "%3B",
       "(": "%28",
@@ -148,7 +149,6 @@ export class ShellSanitizer {
       "<": "%3C",
       ">": "%3E",
       "*": "%2A",
-      "?": "%3F",  // Query delimiter, but also glob
       "[": "%5B",
       "]": "%5D",
       "~": "%7E",
