@@ -1,0 +1,58 @@
+{
+  "name": "@lucascouts/21st.dev",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Magic MCP UI builder - Secure MCP server for 21st.dev component generation",
+  "homepage": "https://21st.dev/magic",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lucascouts/21st.dev.git"
+  },
+  "bin": {
+    "magic": "dist/index.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "ai",
+    "UI",
+    "frontend",
+    "21st.dev",
+    "magic",
+    "kiro"
+  ],
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc && shx chmod +x dist/*.js",
+    "build:prod": "npm run build && npm run test",
+    "debug": "npm run build && npx @modelcontextprotocol/inspector node dist/index.js DEBUG=true",
+    "start": "node dist/index.js",
+    "prepare": "npm run build:prod",
+    "dev": "nodemon --watch src --ext ts,json --exec \"npm run build\"",
+    "test": "jest"
+  },
+  "author": "lucascouts (fork of serafim@21st.dev)",
+  "license": "ISC",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.25.3",
+    "open": "^11.0.0",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@types/jest": "^30.0.0",
+    "@types/node": "^25.2.0",
+    "@types/react": "^19.0.12",
+    "fast-check": "^4.5.3",
+    "jest": "^30.2.0",
+    "nodemon": "^3.1.9",
+    "shx": "^0.4.0",
+    "ts-jest": "^29.1.2",
+    "typescript": "^5.8.2"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
