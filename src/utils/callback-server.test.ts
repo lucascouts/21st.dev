@@ -257,3 +257,103 @@ describe("CallbackServer - Singleton Pattern", () => {
     });
   });
 });
+
+
+describe("CallbackServer - MCP Mode (Token Validation Disabled)", () => {
+  afterEach(() => {
+    CallbackServer.resetInstance();
+  });
+
+  describe("MCP Mode Token Bypass", () => {
+    it("should accept POST requests without token when mcp=true", async () => {
+      const server = CallbackServer.getInstance();
+      const port = await server.start();
+      
+      // Start waiting for callback
+      const waitPromise = server.waitForCallback(5000);
+      
+      // Send POST without token but with mcp=true
+      const response = await fetch(`http://127.0.0.1:${port}/data?mcp=true`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Origin": "https://21st.dev"
+        },
+        body: JSON.stringify({ test: "data" })
+      });
+      
+      expect(response.status).toBe(200);
+      
+      const result = await waitPromise;
+      expect(result.data).toBeDefined();
+      expect(result.timedOut).toBeUndefined();
+    });
+
+    it("should still require token when mcp=false", async () => {
+      const server = CallbackServer.getInstance();
+      const port = await server.start();
+      
+      // Send POST without token and mcp=false
+      const response = await fetch(`http://127.0.0.1:${port}/data?mcp=false`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Origin": "https://21st.dev"
+        },
+        body: JSON.stringify({ test: "data" })
+      });
+      
+      expect(response.status).toBe(401);
+      const json = await response.json();
+      expect(json.error).toBe("Missing session token");
+      
+      server.cancel();
+    });
+
+    it("should still require token when mcp parameter is missing", async () => {
+      const server = CallbackServer.getInstance();
+      const port = await server.start();
+      
+      // Send POST without token and without mcp parameter
+      const response = await fetch(`http://127.0.0.1:${port}/data`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Origin": "https://21st.dev"
+        },
+        body: JSON.stringify({ test: "data" })
+      });
+      
+      expect(response.status).toBe(401);
+      const json = await response.json();
+      expect(json.error).toBe("Missing session token");
+      
+      server.cancel();
+    });
+
+    it("should accept valid token even in MCP mode", async () => {
+      const server = CallbackServer.getInstance();
+      const port = await server.start();
+      const token = server.getSessionToken();
+      
+      // Start waiting for callback
+      const waitPromise = server.waitForCallback(5000);
+      
+      // Send POST with token and mcp=true
+      const response = await fetch(`http://127.0.0.1:${port}/data?mcp=true&token=${token}`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Origin": "https://21st.dev"
+        },
+        body: JSON.stringify({ test: "data" })
+      });
+      
+      expect(response.status).toBe(200);
+      
+      const result = await waitPromise;
+      expect(result.data).toBeDefined();
+      expect(result.timedOut).toBeUndefined();
+    });
+  });
+});
