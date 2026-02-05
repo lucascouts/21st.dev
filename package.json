@@ -32,7 +32,7 @@
     "debug": "bun run build && npx @modelcontextprotocol/inspector bun dist/index.js DEBUG=true",
     "start": "bun dist/index.js",
     "start:node": "node dist/index.js",
-    "prepare": "bun run build:prod",
+    "prepare": "bun run build",
     "dev": "bun --watch src/index.ts",
     "test": "bun test"
   },
