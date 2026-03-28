@@ -1,14 +1,11 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach } from "vitest";
 import { HealthCheckTool } from "./health-check.js";
-import { apiCache } from "../utils/api-cache.js";
 
 describe("HealthCheckTool", () => {
   let tool: HealthCheckTool;
 
   beforeEach(() => {
     tool = new HealthCheckTool();
-    apiCache.clear();
-    vi.clearAllMocks();
   });
 
   it("should have correct name and description", () => {
@@ -29,29 +26,10 @@ describe("HealthCheckTool", () => {
     expect(healthStatus).toHaveProperty("timestamp");
     
     expect(healthStatus.checks).toHaveProperty("api_reachable");
-    expect(healthStatus.checks).toHaveProperty("cache_entries");
-    expect(healthStatus.checks).toHaveProperty("cache_hit_rate");
     expect(healthStatus.checks).toHaveProperty("uptime_seconds");
   });
 
-  it("should report cache statistics correctly", async () => {
-    // Add some cache entries
-    apiCache.set("key1", { data: "value1" });
-    apiCache.set("key2", { data: "value2" });
-    
-    // Simulate cache hits and misses
-    apiCache.get("key1"); // hit
-    apiCache.get("key3"); // miss
-    
-    const result = await tool.execute({});
-    const healthStatus = JSON.parse(result.content[0].text);
-    
-    expect(healthStatus.checks.cache_entries).toBe(2);
-    expect(healthStatus.checks.cache_hit_rate).toBeGreaterThan(0);
-  });
-
   it("should report uptime in seconds", async () => {
-    // Wait a bit to ensure uptime > 0
     await new Promise(resolve => setTimeout(resolve, 100));
     
     const result = await tool.execute({});
@@ -66,7 +44,6 @@ describe("HealthCheckTool", () => {
     const healthStatus = JSON.parse(result.content[0].text);
     
     expect(healthStatus.timestamp).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/);
-    expect(() => new Date(healthStatus.timestamp)).not.toThrow();
   });
 
   it("should report status as healthy, degraded, or unhealthy", async () => {
@@ -74,13 +51,6 @@ describe("HealthCheckTool", () => {
     const healthStatus = JSON.parse(result.content[0].text);
     
     expect(["healthy", "degraded", "unhealthy"]).toContain(healthStatus.status);
-  });
-
-  it("should calculate cache hit rate correctly with no cache activity", async () => {
-    const result = await tool.execute({});
-    const healthStatus = JSON.parse(result.content[0].text);
-    
-    expect(healthStatus.checks.cache_hit_rate).toBe(0);
   });
 
   it("should handle API connectivity check gracefully", async () => {

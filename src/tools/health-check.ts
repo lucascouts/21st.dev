@@ -1,15 +1,12 @@
 import { z } from "zod";
 import { BaseTool, ToolResponse } from "../utils/base-tool.js";
-import { twentyFirstClient, BASE_URL } from "../utils/http-client.js";
-import { apiCache } from "../utils/api-cache.js";
+import { BASE_URL } from "../utils/http-client.js";
 
 interface HealthStatus {
   status: "healthy" | "degraded" | "unhealthy";
   checks: {
     api_reachable: boolean;
     api_latency_ms?: number;
-    cache_entries?: number;
-    cache_hit_rate?: number;
     uptime_seconds: number;
   };
   timestamp: string;
@@ -52,33 +49,14 @@ export class HealthCheckTool extends BaseTool {
    * Requirements: C3.1, C3.2, C3.3, C3.4
    */
   private async checkHealth(): Promise<HealthStatus> {
-    // Check API connectivity (Requirements: C3.2)
     const apiCheck = await this.checkApiConnectivity();
-    
-    // Get cache stats (Requirements: C3.3)
-    const cacheStats = apiCache.getStats();
-    const cacheHitRate = cacheStats.hits + cacheStats.misses > 0
-      ? (cacheStats.hits / (cacheStats.hits + cacheStats.misses)) * 100
-      : 0;
-    
-    // Calculate uptime (Requirements: C3.4)
     const uptimeSeconds = Math.floor((Date.now() - this.startTime) / 1000);
     
-    // Determine overall status
-    let status: "healthy" | "degraded" | "unhealthy";
-    if (apiCheck.reachable) {
-      status = "healthy";
-    } else {
-      status = "unhealthy";
-    }
-    
     return {
-      status,
+      status: apiCheck.reachable ? "healthy" : "unhealthy",
       checks: {
         api_reachable: apiCheck.reachable,
         ...(apiCheck.latency !== undefined && { api_latency_ms: apiCheck.latency }),
-        cache_entries: cacheStats.size,
-        cache_hit_rate: Math.round(cacheHitRate * 100) / 100,
         uptime_seconds: uptimeSeconds,
       },
       timestamp: new Date().toISOString(),

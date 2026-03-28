@@ -1,9 +1,7 @@
-import { config } from "./config.js";
+import { getEffectiveConfig } from "./config.js";
 import { logger } from "./logger.js";
-import { apiCache, ApiCache } from "./api-cache.js";
 
-const TWENTY_FIRST_API_KEY =
-  config.apiKey || process.env.TWENTY_FIRST_API_KEY || process.env.API_KEY;
+const TWENTY_FIRST_API_KEY = getEffectiveConfig().apiKey;
 
 const isTesting = process.env.DEBUG === "true" ? true : false;
 export const BASE_URL = isTesting
@@ -214,36 +212,13 @@ async function executeWithRetry<T>(
 }
 
 
-/**
- * Response type for cached responses
- * Requirements: B1.2
- */
-interface CachedResponse<T> {
-  status: number;
-  data: T;
-}
-
 const createMethod = (method: HttpMethod) => {
-  const useCache = method === "GET";
-  
   return async <T>(
     endpoint: string,
     data?: unknown,
     options: RequestInit = {}
   ) => {
     const url = `${BASE_URL}${endpoint}`;
-    
-    // Check cache for GET requests (Requirements: B1.2)
-    if (useCache) {
-      const cacheKey = ApiCache.generateKey(url);
-      const cached = apiCache.get(cacheKey) as CachedResponse<T> | null;
-      if (cached) {
-        logger.debug(`Cache HIT for ${url}`);
-        return cached;
-      }
-      logger.debug(`Cache MISS for ${url}`);
-    }
-    
     const timeout = getTimeout();
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), timeout);
@@ -264,8 +239,6 @@ const createMethod = (method: HttpMethod) => {
             method,
             headers,
             signal: controller.signal,
-            // Enable HTTP keep-alive for connection reuse
-            // Requirements: 10.1
             keepalive: true,
             ...(data ? { body: JSON.stringify(data) } : {}),
           }),
@@ -273,19 +246,8 @@ const createMethod = (method: HttpMethod) => {
       );
 
       logger.debug(`Response from ${endpoint}: ${response.status}`);
-      const result = { status: response.status, data: (await response.json()) as T };
-      
-      // Store successful GET responses in cache (Requirements: B1.2)
-      // Only cache successful responses (2xx)
-      if (useCache && response.status >= 200 && response.status < 300) {
-        const cacheKey = ApiCache.generateKey(url);
-        apiCache.set(cacheKey, result);
-        logger.debug(`Cached response for ${url}`);
-      }
-      
-      return result;
+      return { status: response.status, data: (await response.json()) as T };
     } catch (error) {
-      // Handle abort (timeout) errors
       if (error instanceof Error && error.name === "AbortError") {
         throw new TimeoutError(endpoint, timeout);
       }

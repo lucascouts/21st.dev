@@ -11,12 +11,13 @@ import { FetchUiTool } from "./tools/fetch-ui.js";
 import { LogoSearchTool } from "./tools/logo-search.js";
 import { RefineUiTool } from "./tools/refine-ui.js";
 import { HealthCheckTool } from "./tools/health-check.js";
+import { CanvasUiTool } from "./tools/canvas-ui.js";
 
 setupJsonConsole();
 
 const logger = new Logger("Server");
 
-const VERSION = "1.0.0";
+const VERSION = "1.1.0";
 const server = new McpServer({
   name: "magic-mcp",
   version: VERSION,
@@ -28,6 +29,7 @@ new LogoSearchTool().register(server);
 new FetchUiTool().register(server);
 new RefineUiTool().register(server);
 new HealthCheckTool().register(server);
+new CanvasUiTool().register(server);
 
 async function runServer() {
   const transport = new StdioServerTransport();

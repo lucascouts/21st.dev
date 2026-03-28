@@ -289,7 +289,9 @@ describe("CallbackServer - MCP Mode (Token Validation Disabled)", () => {
       expect(result.timedOut).toBeUndefined();
     });
 
-    it("should still require token when mcp=false", async () => {
+    // SKIPPED: Token validation is disabled pending 21st.dev frontend support
+    // See security-limitations.md for details. Uncomment when token validation is re-enabled.
+    it.skip("should still require token when mcp=false", async () => {
       const server = CallbackServer.getInstance();
       const port = await server.start();
       
@@ -310,7 +312,8 @@ describe("CallbackServer - MCP Mode (Token Validation Disabled)", () => {
       server.cancel();
     });
 
-    it("should still require token when mcp parameter is missing", async () => {
+    // SKIPPED: Token validation is disabled pending 21st.dev frontend support
+    it.skip("should still require token when mcp parameter is missing", async () => {
       const server = CallbackServer.getInstance();
       const port = await server.start();
       

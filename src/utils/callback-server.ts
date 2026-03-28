@@ -240,29 +240,10 @@ export class CallbackServer {
   }
 
   /**
-   * Extract token from URL query parameters
-   * Requirement A1.3: Validate token on POST /data
-   */
-  private extractTokenFromUrl(url: string | undefined): string | null {
-    if (!url) return null;
-    try {
-      const urlObj = new URL(url, "http://localhost");
-      return urlObj.searchParams.get("token");
-    } catch {
-      return null;
-    }
-  }
-
-  /**
    * Extract client IP from request
-   * Handles X-Forwarded-For header and falls back to socket address
+   * Uses socket address directly (no proxy headers) since callback server runs on localhost
    */
   private getClientIp(req: IncomingMessage): string {
-    const forwarded = req.headers["x-forwarded-for"];
-    if (forwarded) {
-      const ips = Array.isArray(forwarded) ? forwarded[0] : forwarded;
-      return ips.split(",")[0].trim();
-    }
     return req.socket.remoteAddress || "unknown";
   }
 
@@ -304,41 +285,7 @@ export class CallbackServer {
     }
 
     if (req.method === "POST" && req.url?.startsWith("/data")) {
-      // Token validation DISABLED for MCP integration with 21st.dev
-      // The 21st.dev frontend only sends the prompt data, not tokens
       logger.debug(`POST /data received with URL: ${req.url}, Origin: ${origin}`);
-      
-      /* TOKEN VALIDATION DISABLED - Uncomment to re-enable
-      const urlObj = new URL(req.url, "http://localhost");
-      const mcpMode = urlObj.searchParams.get("mcp") === "true";
-      
-      // Requirement A1.3, A1.4: Validate session token
-      if (!mcpMode) {
-        const token = this.extractTokenFromUrl(req.url);
-        
-        if (!token) {
-          logger.warn(`Missing session token from IP: ${clientIp}`);
-          res.writeHead(401, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({ error: "Missing session token" }));
-          return;
-        }
-        
-        if (!this.sessionTokenManager.validate(token)) {
-          // Check if token was ever valid (expired vs invalid)
-          const tokenInfo = this.sessionTokenManager.getTokenInfo(token);
-          if (tokenInfo && Date.now() > tokenInfo.expiresAt) {
-            logger.warn(`Expired session token from IP: ${clientIp}`);
-            res.writeHead(401, { "Content-Type": "application/json" });
-            res.end(JSON.stringify({ error: "Session token expired" }));
-          } else {
-            logger.warn(`Invalid session token from IP: ${clientIp}`);
-            res.writeHead(401, { "Content-Type": "application/json" });
-            res.end(JSON.stringify({ error: "Invalid session token" }));
-          }
-          return;
-        }
-      }
-      */
       
       let body: string;
       try {
@@ -357,17 +304,17 @@ export class CallbackServer {
       
       logger.info(`Received POST /data with ${body.length} bytes from IP: ${clientIp}`);
       
+      // Validate callback data is non-empty
+      if (!body || body.trim().length === 0) {
+        logger.warn(`Empty callback body from IP: ${clientIp}`);
+        res.writeHead(400, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "Empty request body" }));
+        return;
+      }
+
       if (this.promiseResolve) {
         if (this.timeoutId) clearTimeout(this.timeoutId);
-        
-        /* TOKEN INVALIDATION DISABLED - Uncomment to re-enable
-        // Requirement A1.5: Invalidate token after successful use
-        if (this.sessionToken) {
-          this.sessionTokenManager.invalidate(this.sessionToken);
-          this.sessionToken = null;
-        }
-        */
-        
+
         // For singleton, stay running but go idle; for temp instances, shutdown
         if (this.isSingletonInstance) {
           const resolver = this.promiseResolve;

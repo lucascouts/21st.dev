@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { BaseTool } from "../utils/base-tool.js";
 import { Logger } from "../utils/logger.js";
+import { getTimeout } from "../utils/http-client.js";
 
 const logger = new Logger("LogoSearch");
 
@@ -85,10 +86,21 @@ export class LogoSearchTool extends BaseTool {
     return results;
   }
 
+  private async fetchWithTimeout(url: string): Promise<Response> {
+    const timeout = getTimeout();
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeout);
+    try {
+      return await fetch(url, { signal: controller.signal });
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  }
+
   private async fetchLogos(query: string): Promise<SVGLogo[]> {
     const url = `https://api.svgl.app?search=${encodeURIComponent(query)}`;
     try {
-      const response = await fetch(url);
+      const response = await this.fetchWithTimeout(url);
       if (!response.ok) return [];
       const data = await response.json();
       return Array.isArray(data) ? data : [];
@@ -99,7 +111,7 @@ export class LogoSearchTool extends BaseTool {
   }
 
   private async fetchSVGContent(url: string): Promise<string> {
-    const response = await fetch(url);
+    const response = await this.fetchWithTimeout(url);
     if (!response.ok) throw new Error(`Failed to fetch SVG: ${response.statusText}`);
     return await response.text();
   }

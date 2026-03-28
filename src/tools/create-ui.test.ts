@@ -2,8 +2,6 @@ import * as fc from "fast-check";
 import {
   resetDisplayEnvCache,
   resetBrowserCache,
-  getDisplayEnvCacheState,
-  getBrowserCacheState,
 } from "./create-ui.js";
 import { BrowserDetector } from "../utils/browser-detector.js";
 
@@ -34,7 +32,8 @@ describe("Property 14: Display Environment Caching", () => {
 
       // First call should populate the cache
       const firstResult = await getDisplayEnv();
-      const cacheAfterFirst = getDisplayEnvCacheState();
+      const rawCacheAfterFirst = BrowserDetector.getCacheState();
+      const cacheAfterFirst = rawCacheAfterFirst?.displayEnv ? { env: rawCacheAfterFirst.displayEnv as Record<string, string>, detectedAt: rawCacheAfterFirst.detectedAt } : null;
 
       expect(cacheAfterFirst).not.toBeNull();
       expect(cacheAfterFirst?.env).toEqual(firstResult);
@@ -42,7 +41,8 @@ describe("Property 14: Display Environment Caching", () => {
 
       // Second call should return cached result
       const secondResult = await getDisplayEnv();
-      const cacheAfterSecond = getDisplayEnvCacheState();
+      const rawCacheAfterSecond = BrowserDetector.getCacheState();
+      const cacheAfterSecond = rawCacheAfterSecond?.displayEnv ? { env: rawCacheAfterSecond.displayEnv as Record<string, string>, detectedAt: rawCacheAfterSecond.detectedAt } : null;
 
       // Cache should be the same object (same detectedAt timestamp)
       expect(cacheAfterSecond?.detectedAt).toBe(cacheAfterFirst?.detectedAt);
@@ -65,18 +65,20 @@ describe("Property 14: Display Environment Caching", () => {
 
             // Make first call and record the result
             const firstResult = await getDisplayEnv();
-            const firstCacheState = getDisplayEnvCacheState();
-            
+            const rawFirstCache = BrowserDetector.getCacheState();
+            const firstCacheState = rawFirstCache?.displayEnv ? { env: rawFirstCache.displayEnv as Record<string, string>, detectedAt: rawFirstCache.detectedAt } : null;
+
             if (firstCacheState === null) {
               return false; // Cache should be populated after first call
             }
-            
+
             const firstDetectedAt = firstCacheState.detectedAt;
 
             // Make subsequent calls and verify they return the same result
             for (let i = 1; i < numCalls; i++) {
               const result = await getDisplayEnv();
-              const currentCacheState = getDisplayEnvCacheState();
+              const rawCurrentCache = BrowserDetector.getCacheState();
+              const currentCacheState = rawCurrentCache?.displayEnv ? { env: rawCurrentCache.displayEnv as Record<string, string>, detectedAt: rawCurrentCache.detectedAt } : null;
 
               // Results should be identical (compare by value)
               const firstResultStr = JSON.stringify(firstResult);
@@ -106,7 +108,8 @@ describe("Property 14: Display Environment Caching", () => {
 
       // First call should populate the cache
       const firstResult = await getDefaultBrowser();
-      const cacheAfterFirst = getBrowserCacheState();
+      const rawCacheAfterFirst = BrowserDetector.getCacheState();
+      const cacheAfterFirst = rawCacheAfterFirst ? { browser: rawCacheAfterFirst.defaultBrowser, detectedAt: rawCacheAfterFirst.detectedAt } : null;
 
       expect(cacheAfterFirst).not.toBeNull();
       expect(cacheAfterFirst?.browser).toBe(firstResult);
@@ -114,7 +117,8 @@ describe("Property 14: Display Environment Caching", () => {
 
       // Second call should return cached result
       const secondResult = await getDefaultBrowser();
-      const cacheAfterSecond = getBrowserCacheState();
+      const rawCacheAfterSecond = BrowserDetector.getCacheState();
+      const cacheAfterSecond = rawCacheAfterSecond ? { browser: rawCacheAfterSecond.defaultBrowser, detectedAt: rawCacheAfterSecond.detectedAt } : null;
 
       // Cache should be the same object (same detectedAt timestamp)
       expect(cacheAfterSecond?.detectedAt).toBe(cacheAfterFirst?.detectedAt);
@@ -137,18 +141,20 @@ describe("Property 14: Display Environment Caching", () => {
 
             // Make first call and record the result
             const firstResult = await getDefaultBrowser();
-            const firstCacheState = getBrowserCacheState();
-            
+            const rawFirstCache = BrowserDetector.getCacheState();
+            const firstCacheState = rawFirstCache ? { browser: rawFirstCache.defaultBrowser, detectedAt: rawFirstCache.detectedAt } : null;
+
             if (firstCacheState === null) {
               return false; // Cache should be populated after first call
             }
-            
+
             const firstDetectedAt = firstCacheState.detectedAt;
 
             // Make subsequent calls and verify they return the same result
             for (let i = 1; i < numCalls; i++) {
               const result = await getDefaultBrowser();
-              const currentCacheState = getBrowserCacheState();
+              const rawCurrentCache = BrowserDetector.getCacheState();
+              const currentCacheState = rawCurrentCache ? { browser: rawCurrentCache.defaultBrowser, detectedAt: rawCurrentCache.detectedAt } : null;
 
               // Results should be identical
               if (result !== firstResult) {

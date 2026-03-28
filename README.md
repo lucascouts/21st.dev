@@ -21,6 +21,10 @@ Original → Fork:
 - `21st_magic_component_refiner` → `magic_component_refiner`
 - `logo_search` → `magic_logo_search`
 
+## Tool Naming Convention
+
+This fork uses `magic_*` prefixed tool names (e.g., `magic_component_builder`, `magic_logo_search`) instead of the original `21st_magic_*` prefix. This was a deliberate choice for Gemini compatibility, as Gemini does not support tool names starting with numbers.
+
 ## Installation
 
 ### Kiro IDE

@@ -35,6 +35,56 @@ export class BrowserDetector {
   private static cache: BrowserDetectorCache | null = null;
 
   /**
+   * Read environment variables from a running GUI process owned by the current user.
+   * Scans /proc for known window managers/compositors and extracts display-related env vars.
+   */
+  private static readEnvFromGuiProcess(fs: typeof import("fs"), uid: number, env: DisplayEnvironment): void {
+    const currentUid = String(uid);
+    const procs = fs.readdirSync("/proc").filter((p: string) => /^\d+$/.test(p));
+    for (const pid of procs.slice(0, 100)) {
+      try {
+        const statusContent = fs.readFileSync(`/proc/${pid}/status`, "utf-8");
+        const uidLine = statusContent.split("\n").find((l: string) => l.startsWith("Uid:"));
+        if (!uidLine || !uidLine.includes(currentUid)) continue;
+
+        const cmdline = fs.readFileSync(`/proc/${pid}/cmdline`, "utf-8");
+        if (
+          cmdline.includes("kwin") ||
+          cmdline.includes("gnome-shell") ||
+          cmdline.includes("Xorg") ||
+          cmdline.includes("plasma") ||
+          cmdline.includes("mutter") ||
+          cmdline.includes("sway")
+        ) {
+          const environData = fs.readFileSync(`/proc/${pid}/environ`, "utf-8");
+          const vars = environData.split("\0");
+
+          for (const v of vars) {
+            if (v.startsWith("DISPLAY=")) {
+              env.DISPLAY = v.split("=")[1];
+            }
+            if (v.startsWith("WAYLAND_DISPLAY=")) {
+              env.WAYLAND_DISPLAY = v.split("=")[1];
+            }
+            if (v.startsWith("DBUS_SESSION_BUS_ADDRESS=")) {
+              env.DBUS_SESSION_BUS_ADDRESS = v.split("=").slice(1).join("=");
+            }
+            if (v.startsWith("XDG_CURRENT_DESKTOP=")) {
+              env.XDG_CURRENT_DESKTOP = v.split("=")[1];
+            }
+            if (v.startsWith("DESKTOP_SESSION=")) {
+              env.DESKTOP_SESSION = v.split("=")[1];
+            }
+          }
+          break;
+        }
+      } catch {
+        // Skip inaccessible processes
+      }
+    }
+  }
+
+  /**
    * Detect display environment (X11/Wayland)
    * Results are cached for process lifetime
    * Requirements: C1.2, C1.3
@@ -63,15 +113,20 @@ export class BrowserDetector {
     try {
       const { execSync } = await import("child_process");
 
-      // Try to get session type from loginctl
+      // Try to get session type from loginctl (using separate commands to avoid shell expansion)
       try {
-        const sessionType = execSync(
-          "loginctl show-session $(loginctl | grep $(whoami) | awk '{print $1}') -p Type --value 2>/dev/null",
-          {
+        const username = execSync("whoami", { encoding: "utf-8", timeout: 1000 }).trim();
+        const loginctlOutput = execSync("loginctl --no-legend", { encoding: "utf-8", timeout: 2000 }).trim();
+        const sessionLine = loginctlOutput.split("\n").find((line: string) => line.includes(username));
+        const sessionId = sessionLine?.trim().split(/\s+/)[0];
+        
+        let sessionType = "";
+        if (sessionId) {
+          sessionType = execSync(`loginctl show-session ${sessionId} -p Type --value`, {
             encoding: "utf-8",
             timeout: 2000,
-          }
-        ).trim();
+          }).trim();
+        }
 
         if (sessionType) {
           env.XDG_SESSION_TYPE = sessionType;
@@ -95,51 +150,9 @@ export class BrowserDetector {
         env.DISPLAY = process.env.DISPLAY || ":0";
       }
 
-      // Try to read environment from a running GUI process (more reliable)
+      // Try to read environment from a running GUI process owned by current user
       try {
-        const procs = fs.readdirSync("/proc").filter((p: string) => /^\d+$/.test(p));
-        for (const pid of procs.slice(0, 100)) {
-          // Check first 100 processes
-          try {
-            const environPath = `/proc/${pid}/environ`;
-            const cmdlinePath = `/proc/${pid}/cmdline`;
-
-            // Check if it's a GUI process (window manager, compositor, or desktop)
-            const cmdline = fs.readFileSync(cmdlinePath, "utf-8");
-            if (
-              cmdline.includes("kwin") ||
-              cmdline.includes("gnome-shell") ||
-              cmdline.includes("Xorg") ||
-              cmdline.includes("plasma") ||
-              cmdline.includes("mutter") ||
-              cmdline.includes("sway")
-            ) {
-              const environData = fs.readFileSync(environPath, "utf-8");
-              const vars = environData.split("\0");
-
-              for (const v of vars) {
-                if (v.startsWith("DISPLAY=")) {
-                  env.DISPLAY = v.split("=")[1];
-                }
-                if (v.startsWith("WAYLAND_DISPLAY=")) {
-                  env.WAYLAND_DISPLAY = v.split("=")[1];
-                }
-                if (v.startsWith("DBUS_SESSION_BUS_ADDRESS=")) {
-                  env.DBUS_SESSION_BUS_ADDRESS = v.split("=").slice(1).join("=");
-                }
-                if (v.startsWith("XDG_CURRENT_DESKTOP=")) {
-                  env.XDG_CURRENT_DESKTOP = v.split("=")[1];
-                }
-                if (v.startsWith("DESKTOP_SESSION=")) {
-                  env.DESKTOP_SESSION = v.split("=")[1];
-                }
-              }
-              break;
-            }
-          } catch {
-            // Skip inaccessible processes
-          }
-        }
+        this.readEnvFromGuiProcess(fs, uid, env);
       } catch {
         // /proc reading failed, use defaults
       }

@@ -15,11 +15,19 @@ const REDACTED = "[REDACTED]";
 
 export class LogSanitizer {
   /**
-   * Default pattern for API keys (20+ alphanumeric chars with underscores/dashes)
+   * Patterns for detecting API keys and secrets in log output.
+   * Uses specific prefixes and formats to avoid false positives.
    * Requirement A3.1
    */
   private static readonly DEFAULT_PATTERNS: RegExp[] = [
-    /[A-Za-z0-9_-]{20,}/g,
+    // Common API key prefixes (sk-, pk-, key_, api_, etc.)
+    /(?<=^|[\s=:])(?:sk|pk|api|key|secret|token|auth|bearer)[_-][A-Za-z0-9_-]{16,}/gi,
+    // AWS-style keys (AKIA...)
+    /\bAKIA[A-Z0-9]{16}\b/g,
+    // Generic hex tokens (64+ chars, like session tokens)
+    /\b[a-f0-9]{64,}\b/gi,
+    // Bearer tokens in strings
+    /Bearer\s+[A-Za-z0-9._-]{20,}/gi,
   ];
 
   /**
