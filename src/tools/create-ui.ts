@@ -104,7 +104,7 @@ export class CreateUiTool extends BaseTool {
         return null;
       }
 
-      const rawUrl = `https://21st.dev/magic-chat?q=${encodeURIComponent(query)}&mcp=true&port=${port}&token=${sessionToken}`;
+      const rawUrl = `https://21st.dev/magic-chat?q=${encodeURIComponent(query)}&mcp=true&port=${port}`;
       let url: string;
       try {
         url = ShellSanitizer.sanitizeUrl(rawUrl);
