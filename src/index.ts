@@ -1,88 +1,53 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { parseConfig } from "./config.js";
+import { Logger } from "./logger.js";
+import { HttpClient } from "./http/client.js";
+import { BrowserDetector } from "./browser/detector.js";
+import { MagicServer } from "./server.js";
 
-import { setupJsonConsole } from "./utils/console.js";
-import { Logger } from "./utils/logger.js";
+// 1. Parse and freeze config — throws if invalid
+const config = parseConfig();
 
-import { CreateUiTool } from "./tools/create-ui.js";
-import { FetchUiTool } from "./tools/fetch-ui.js";
-import { LogoSearchTool } from "./tools/logo-search.js";
-import { RefineUiTool } from "./tools/refine-ui.js";
-import { HealthCheckTool } from "./tools/health-check.js";
-import { CanvasUiTool } from "./tools/canvas-ui.js";
+// 2. Create logger (stderr only — stdout is reserved for MCP JSON-RPC)
+const logger = new Logger(config.logLevel);
 
-setupJsonConsole();
-
-const logger = new Logger("Server");
-
-const VERSION = "1.1.0";
-const server = new McpServer({
-  name: "magic-mcp",
-  version: VERSION,
+// 3. Create HTTP client with retry config
+const httpClient = new HttpClient({
+  baseUrl: config.debug ? "http://localhost:3005" : "https://magic.21st.dev",
+  apiKey: config.apiKey,
+  timeout: config.timeout,
+  retry: {
+    maxRetries: 3,
+    baseDelay: 1_000,
+    maxDelay: 8_000,
+    jitterMax: 500,
+  },
+  logger,
 });
 
-// Register tools with Gemini-compatible names (no leading digits)
-new CreateUiTool().register(server);
-new LogoSearchTool().register(server);
-new FetchUiTool().register(server);
-new RefineUiTool().register(server);
-new HealthCheckTool().register(server);
-new CanvasUiTool().register(server);
+// 4. Create browser detector
+const browserDetector = new BrowserDetector(logger);
 
-async function runServer() {
-  const transport = new StdioServerTransport();
-  logger.info(`Starting magic-mcp server v${VERSION} (PID: ${process.pid})`);
+// 5. Create and start server
+const server = new MagicServer({ config, httpClient, browserDetector, logger });
 
-  let isShuttingDown = false;
+server.start().catch((error) => {
+  logger.error("Fatal error starting server:", error);
+  process.exitCode = 1;
+});
 
-  const cleanup = () => {
-    if (isShuttingDown) return;
-    isShuttingDown = true;
+// 6. Signal handlers
+process.on("SIGTERM", () => {
+  logger.info("Received SIGTERM");
+  server.shutdown();
+});
 
-    logger.info(`Shutting down server (PID: ${process.pid})...`);
-    try {
-      transport.close();
-    } catch (error) {
-      logger.error(`Error closing transport (PID: ${process.pid}):`, error);
-    }
-    logger.info(`Server closed (PID: ${process.pid})`);
-    process.exit(0);
-  };
+process.on("SIGINT", () => {
+  logger.info("Received SIGINT");
+  server.shutdown();
+});
 
-  transport.onerror = (error: Error) => {
-    logger.error(`Transport error (PID: ${process.pid}):`, error);
-    cleanup();
-  };
-
-  transport.onclose = () => {
-    logger.warn(`Transport closed unexpectedly (PID: ${process.pid})`);
-    cleanup();
-  };
-
-  process.on("SIGTERM", () => {
-    logger.info(`Received SIGTERM (PID: ${process.pid})`);
-    cleanup();
-  });
-
-  process.on("SIGINT", () => {
-    logger.info(`Received SIGINT (PID: ${process.pid})`);
-    cleanup();
-  });
-
-  process.on("beforeExit", () => {
-    logger.debug(`Received beforeExit (PID: ${process.pid})`);
-    cleanup();
-  });
-
-  await server.connect(transport);
-  logger.info(`Server started (PID: ${process.pid})`);
-}
-
-runServer().catch((error) => {
-  logger.error(`Fatal error running server (PID: ${process.pid}):`, error);
-  if (!process.exitCode) {
-    process.exit(1);
-  }
+process.on("unhandledRejection", (reason) => {
+  logger.error("Unhandled rejection:", reason);
 });
