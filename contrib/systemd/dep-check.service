@@ -1,0 +1,37 @@
+[Unit]
+Description=Weekly offline dependency and vulnerability check for this repository clone
+Documentation=https://github.com/lucascouts/21st.dev
+
+[Service]
+# The check is a batch job: it runs, reports, and exits. It is not a daemon.
+Type=oneshot
+
+# The repository path is deliberately NOT a literal path here: it differs per
+# machine and per clone, and a unit file that hard-codes one developer's home
+# directory is wrong everywhere else. %h is systemd's specifier for the home
+# directory of the user running the service manager, and the value below is only
+# the default for a clone made with `git clone` directly into $HOME. Any other
+# clone location is bound at install time with a drop-in -- see README.md.
+#
+# There is intentionally no "-" prefix: if the path is wrong, the unit must fail
+# loudly (status=200/CHDIR) rather than quietly run the check somewhere else.
+WorkingDirectory=%h/21st.dev
+
+# `bash` without a slash is resolved against systemd's fixed binary search path,
+# which avoids guessing between /bin/bash and /usr/bin/bash across distributions.
+# The script path is relative to WorkingDirectory= above.
+ExecStart=bash scripts/dep-check.sh
+
+# The script's exit code is its verdict, not its health:
+#   0  clean and current
+#   1  updates or vulnerabilities found  <- a routine outcome, not a malfunction
+#   2  a scanner itself errored          <- a real failure, must surface as one
+# Declaring 1 successful keeps a normal "updates available" week from showing up
+# as a red `failed` in `systemctl --user status`, while 2 (and any crash or
+# signal) still does. The findings themselves are read from the journal.
+SuccessExitStatus=1
+
+# Output deliberately goes nowhere but the journal (R1.6): stdout and stderr are
+# journald-bound by default under the user manager, so no StandardOutput= or
+# StandardError= redirect is configured here. Read a run with:
+#   journalctl --user -u dep-check.service

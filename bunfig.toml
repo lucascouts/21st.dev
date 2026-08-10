@@ -8,11 +8,16 @@
 # to survive a quarantine window first, during which a malicious publish is
 # normally detected and yanked.
 #
-# This is a rolling quarantine, NOT a version pin. It replaces the discipline
-# that the former `overrides` block in package.json was mistakenly believed to
-# provide: that block used caret ranges, which resolve to exactly what the
-# resolver would have picked unaided, so it pinned nothing while blocking
-# automatic remediation of known CVEs.
+# This is a rolling quarantine, NOT a version pin, and it only applies when a
+# dependency is actually resolved — versions already recorded in bun.lock are
+# left untouched. It therefore does nothing about a lockfile that simply ages:
+# the resolved tree drifts behind while package.json still looks healthy, which
+# is how the known CVEs accumulated. Staleness is covered instead by
+# scripts/dep-check.sh, which re-resolves and scans the tree on a schedule.
+#
+# `minimumReleaseAgeExcludes` would exempt named packages from the age gate.
+# Left unset deliberately — the conservative default; reach for it only if the
+# gate blocks a release that is actually needed.
 #
 # The setting applies to every `bun install` — no `--minimum-release-age` flag
 # on the command line, so nobody has to remember it.

@@ -1,0 +1,28 @@
+[Unit]
+Description=Schedule the weekly dependency and vulnerability check
+Documentation=https://github.com/lucascouts/21st.dev
+
+[Timer]
+# Wall-clock schedule, normalized by systemd to "Mon *-*-* 00:00:00".
+# Weekly matches the 604800-second release-age cooldown configured in
+# bunfig.toml: checking more often than the cooldown only re-reports packages
+# that are still deliberately being held back.
+OnCalendar=weekly
+
+# Catch up on a run missed while the machine was off or the user was not logged
+# in. Without this, a laptop that is closed on Monday simply skips that week and
+# nobody finds out. Only has an effect on OnCalendar= timers.
+Persistent=true
+
+# Spread the start so the check does not begin at the same instant as every
+# other Monday-midnight job -- and, more importantly, so a Persistent= catch-up
+# run does not land on top of everything else that starts at login.
+#
+# FixedRandomDelay= is deliberately left off (default false). systemd.timer(5)
+# warns that a *fixed* delay comparable to the timer's own period can prevent a
+# weekly timer from ever firing on a frequently restarted machine; one hour
+# against a one-week period is far below that threshold either way.
+RandomizedDelaySec=1h
+
+[Install]
+WantedBy=timers.target

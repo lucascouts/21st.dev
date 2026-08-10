@@ -33,7 +33,8 @@
     "test": "bun test",
     "debug": "bun run build && bunx @modelcontextprotocol/inspector bun dist/index.js",
     "prepare": "bun run build",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "dep:check": "bash scripts/dep-check.sh"
   },
   "author": "@inclulucascouts",
   "license": "ISC",
@@ -47,6 +48,6 @@
     "typescript": "^6.0.3"
   },
   "engines": {
-    "bun": ">=1.2.0"
+    "bun": ">=1.3.0"
   }
 }
