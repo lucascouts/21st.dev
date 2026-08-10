@@ -1,0 +1,22 @@
+# Bun configuration — see https://bun.com/docs/runtime/bunfig
+#
+# Supply-chain cooldown (release-age quarantine).
+#
+# Package versions published more recently than `minimumReleaseAge` seconds are
+# filtered out during dependency resolution. A freshly published — and possibly
+# compromised — release is therefore never installed on the day it lands; it has
+# to survive a quarantine window first, during which a malicious publish is
+# normally detected and yanked.
+#
+# This is a rolling quarantine, NOT a version pin. It replaces the discipline
+# that the former `overrides` block in package.json was mistakenly believed to
+# provide: that block used caret ranges, which resolve to exactly what the
+# resolver would have picked unaided, so it pinned nothing while blocking
+# automatic remediation of known CVEs.
+#
+# The setting applies to every `bun install` — no `--minimum-release-age` flag
+# on the command line, so nobody has to remember it.
+
+[install]
+# 7 days = 7 * 24 * 60 * 60 seconds.
+minimumReleaseAge = 604800

@@ -32,10 +32,9 @@ logs/
 # TypeScript
 *.tsbuildinfo
 
-# Bun
-bun.lock
-
-# Package manager locks (using bun.lock)
+# Package manager locks
+# bun.lock IS committed on purpose (reproducible installs via --frozen-lockfile).
+# This project is Bun-only, so an npm lockfile must never be committed.
 package-lock.json
 
 # Kiro
