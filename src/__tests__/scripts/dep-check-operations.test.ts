@@ -14,6 +14,30 @@ import { readRepoFile } from "./dep-check-harness.js";
  * description of a mechanism that did not exist.
  */
 
+/**
+ * Numeric components of a version-ish string, in order: `>=1.3.0` -> [1, 3, 0],
+ * `1.3-alpine` -> [1, 3]. An empty result means "no version here", which the
+ * floor assertion below treats as a failure rather than as a pass.
+ */
+function versionComponents(text: string): number[] {
+  const found = text.match(/(\d+(?:\.\d+)*)/);
+  return found ? found[1].split(".").map(Number) : [];
+}
+
+/**
+ * Component-wise `>=`, compared over only as many components as the SHORTER of
+ * the two supplies. `1.3-alpine` carries two components, not three, so a
+ * comparison demanding major.minor.patch would reject today's correct tag.
+ * [1,3] against a floor of [1,3,0] is satisfied; [1,2] is not; [1,4] is.
+ */
+function atLeast(got: number[], floor: number[]): boolean {
+  for (let i = 0; i < Math.min(got.length, floor.length); i += 1) {
+    if (got[i] > floor[i]) return true;
+    if (got[i] < floor[i]) return false;
+  }
+  return true;
+}
+
 let unit: string;
 let readme: string;
 let bunfig: string;
@@ -108,7 +132,8 @@ describe("the entry points story.md promises stay unchanged", () => {
     const manifest = JSON.parse(await readRepoFile("package.json")) as {
       engines?: Record<string, string>;
     };
-    expect(manifest.engines?.bun).toBe(">=1.3.0");
+    const declared = manifest.engines?.bun;
+    expect(declared).toBe(">=1.3.0");
 
     // Both Dockerfile stages must agree with each other. A builder newer than
     // the runtime ships an artifact the runtime may not be able to run.
@@ -116,5 +141,35 @@ describe("the entry points story.md promises stay unchanged", () => {
       .map((match) => match[1]);
     expect(stages.length, "expected a multi-stage Dockerfile on oven/bun").toBe(2);
     expect(new Set(stages).size, `the two stages disagree: ${stages.join(" vs ")}`).toBe(1);
+
+    // AGREEMENT IS NOT THE FLOOR, and this assertion exists because that
+    // difference shipped: two stages both at `1.2-alpine` agree with each other
+    // perfectly while sitting below the declared floor. Story 001 established
+    // that every 1.2.x accepts `install.minimumReleaseAge` in silence and
+    // applies no cooldown, so the floor is load-bearing — a build on 1.2 would
+    // resolve packages this repository's own quarantine is meant to withhold,
+    // and nothing would say so. Both properties are wanted; this one is added
+    // beside the agreement check, never in place of it (004 R4.1, R4.4).
+    //
+    // The floor is READ from `engines.bun` rather than restated as `1.3` here,
+    // so the next bump cannot leave the image behind: two sources of truth for
+    // one floor desynchronise, which is the same class of defect as the
+    // documentation drift story 004 also closes (004 R4.2).
+    const floor = versionComponents(declared ?? "");
+    expect(floor.length, `engines.bun declares no parseable version: ${declared}`)
+      .toBeGreaterThan(0);
+
+    for (const stage of stages) {
+      const tag = stage.slice(stage.indexOf(":") + 1);
+      const got = versionComponents(tag);
+      // A tag with no numeric component — `latest`, `alpine` — FAILS rather
+      // than passing by default. An unparseable tag is not evidence of
+      // satisfying a floor; it is the absence of evidence (004 R4.3).
+      expect(got.length, `image tag carries no parseable version: ${stage}`).toBeGreaterThan(0);
+      expect(
+        atLeast(got, floor),
+        `${stage} is below the Bun floor declared by engines.bun (${declared})`,
+      ).toBe(true);
+    }
   });
 });
