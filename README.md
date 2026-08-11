@@ -6,16 +6,31 @@
 
 Fork of [21st-dev/magic-mcp](https://github.com/21st-dev/magic-mcp) with fixes for Kiro IDE compatibility.
 
+## Requirements
+
+Bun >= 1.3.0. This project is Bun-only: build, test and runtime all go through Bun.
+
 ## Changes from Original
 
 - **Direct API calls**: Replaced browser+callback mechanism with direct API calls
 - **Gemini-compatible tool names**: Renamed tools to not start with numbers
-- **Reduced dependencies**: Removed `cors`, `express` (not needed); `open` kept as browser fallback
+- **Minimal dependencies**: Only `@modelcontextprotocol/sdk` and `zod` at runtime — `cors`,
+  `express`, `open`, `esbuild` and `shx` were all dropped
 - **Better error handling**: Added fallback mechanisms and improved logging
 
-## Tool Names
+## Tools
 
-Original → Fork:
+| Tool | Purpose |
+|------|---------|
+| `magic_component_builder` | Generate a new UI component |
+| `magic_component_inspiration` | Fetch component inspiration |
+| `magic_component_refiner` | Refine an existing component |
+| `magic_component_canvas` | Open the component canvas |
+| `magic_logo_search` | Search and fetch logos (SVG sanitized) |
+| `magic_health_check` | Report server health and latency |
+
+Renamed from the original fork:
+
 - `21st_magic_component_builder` → `magic_component_builder`
 - `21st_magic_component_inspiration` → `magic_component_inspiration`
 - `21st_magic_component_refiner` → `magic_component_refiner`
@@ -35,7 +50,7 @@ Add to `.kiro/settings/mcp.json`:
 {
   "mcpServers": {
     "magic": {
-      "command": "node",
+      "command": "bun",
       "args": ["/path/to/magic-mcp-fork/dist/index.js"],
       "env": {
         "API_KEY": "your-21st-dev-api-key"
@@ -51,8 +66,8 @@ Add to `.kiro/settings/mcp.json`:
 {
   "mcpServers": {
     "magic": {
-      "command": "npx",
-      "args": ["-y", "@lucascouts/21st-dev-kiro@latest"],
+      "command": "bunx",
+      "args": ["@lucascouts/21st.dev@latest"],
       "env": {
         "API_KEY": "your-21st-dev-api-key"
       }
@@ -86,11 +101,13 @@ Example: If you set `API_KEY` both as an environment variable and as a CLI argum
 | `API_KEY` | Your 21st.dev API key | - | Yes |
 | `TWENTY_FIRST_API_KEY` | Alternative name for API key | - | No |
 | `LOG_LEVEL` | Logging verbosity: `debug`, `info`, `warn`, `error` | `info` | No |
-| `MAX_FILE_SIZE` | Maximum file size for processing (bytes) | `10485760` (10MB) | No |
+| `MAX_FILE_SIZE` | Maximum file size for processing (bytes) | `1048576` (1MB) | No |
 | `TWENTY_FIRST_TIMEOUT` | API request timeout (milliseconds) | `30000` (30s) | No |
+| `MAX_BODY_SIZE` | Maximum callback body size (bytes) | `1048576` (1MB) | No |
 | `DEBUG` | Enable debug mode (`true`/`false`) | `false` | No |
-| `CACHE_TTL` | Cache entry time-to-live (seconds) | `300` (5 min) | No |
-| `MAX_BODY_SIZE` | Maximum request body size (bytes) | `1048576` (1MB) | No |
+
+If no API key is provided, the server fails fast at boot instead of starting in a
+broken state.
 
 ### CLI Arguments
 
@@ -98,33 +115,25 @@ You can also pass configuration via command-line arguments:
 
 ```bash
 # API Key
-node dist/index.js API_KEY=your-key
-node dist/index.js --API_KEY=your-key
+bun dist/index.js API_KEY=your-key
+bun dist/index.js --API_KEY=your-key
 
 # Feature flags
-node dist/index.js --canvas
-node dist/index.js --github
+bun dist/index.js --canvas
+bun dist/index.js --github
+bun dist/index.js --debug
 ```
 
 **Note:** CLI arguments take precedence over environment variables.
 
 ## Development
 
-### With Bun (Recommended)
-
 ```bash
-bun install
-bun run build
-bun test
-bun run dev  # watch mode
-```
-
-### With Node.js
-
-```bash
-npm install
-npm run build:node
-npm run start:node
+bun install           # install dependencies
+bun run typecheck     # tsc --noEmit
+bun test              # unit + property-based tests
+bun run build         # bundle to dist/
+bun run dev           # watch mode
 ```
 
 ## License
