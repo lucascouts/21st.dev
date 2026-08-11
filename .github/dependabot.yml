@@ -1,0 +1,40 @@
+version: 2
+
+updates:
+  # Workflow actions are pinned by commit SHA in .github/workflows/. Pinning is
+  # the right call, but a frozen SHA never receives a security patch on its own
+  # and the freeze looks deliberate, so nobody notices. Without this block the
+  # pinning degrades from a protection into abandonware. Dependabot rewrites the
+  # SHA and keeps the trailing "# vX.Y.Z" comment in sync with it.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    cooldown:
+      default-days: 7
+    groups:
+      actions:
+        patterns:
+          - "*"
+
+  # Runtime and dev dependencies, resolved from bun.lock.
+  #
+  # Scope note: Dependabot covers VERSION updates only. GitHub's supported-
+  # ecosystems table marks `bun` as unsupported for SECURITY updates, so this
+  # block raises no CVE alerts and must not be read as CVE coverage. Detection
+  # lives in scripts/dep-check.sh, which runs osv-scanner and trivy over the
+  # whole resolved tree on a weekly timer. The two are complementary: the script
+  # detects, Dependabot acts.
+  - package-ecosystem: "bun"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    # Mirrors install.minimumReleaseAge in bunfig.toml (604800 seconds = 7 days).
+    #
+    # THESE TWO VALUES MUST STAY IN SYNC. Dependabot resolves candidate versions
+    # itself, so a shorter cooldown here would open pull requests proposing a
+    # package that `bun install` then refuses to install — two sources of truth
+    # for one policy, diverging in silence. Change one, change the other.
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 5
