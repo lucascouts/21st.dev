@@ -37,8 +37,10 @@ logs/
 # This project is Bun-only, so an npm lockfile must never be committed.
 package-lock.json
 
-# Kiro
-.kiro/
-
 # Epic
 .epic/
+
+# Claude Code sub-agent scratch memory.
+# Written by agents at runtime, never a project artifact. Note this ignores only
+# agent-memory/ — .claude/settings.json and .claude/agents/ stay committable.
+.claude/agent-memory/
