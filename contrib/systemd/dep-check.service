@@ -22,14 +22,26 @@ WorkingDirectory=%h/21st.dev
 # The script path is relative to WorkingDirectory= above.
 ExecStart=bash scripts/dep-check.sh
 
-# The script's exit code is its verdict, not its health:
+# The script's exit code is its verdict, and every non-zero verdict is a real
+# failure of this unit:
 #   0  clean and current
-#   1  updates or vulnerabilities found  <- a routine outcome, not a malfunction
-#   2  a scanner itself errored          <- a real failure, must surface as one
-# Declaring 1 successful keeps a normal "updates available" week from showing up
-# as a red `failed` in `systemctl --user status`, while 2 (and any crash or
-# signal) still does. The findings themselves are read from the journal.
-SuccessExitStatus=1
+#   1  updates or vulnerabilities found  <- a failure: something needs doing
+#   2  the check could not see everything <- a failure: nothing is certified
+#
+# No directive here declares any non-zero status a success, deliberately. The
+# check reports through two channels -- the JSON in the journal AND the exit
+# status -- and declaring 1 successful switches the second one off: a week with
+# an available update would look identical to a clean week in
+# `systemctl --user status`, which is precisely how a stale tree goes unnoticed.
+# (The directive that used to do this is named in git history, not in this file
+# or the README: both are greppable evidence that nothing mutes the verdict.)
+#
+# The consequence is intended, not tolerated: after a findings run the unit stays
+# listed in `systemctl --user --failed` until the next run clears it or someone
+# runs `systemctl --user reset-failed dep-check.service`. The timer keeps firing
+# on schedule regardless of the failed state, so a red unit never stops the next
+# check. Expect this unit to be red often -- the remedy is `bun update`, and a
+# signal nobody can ignore is the point.
 
 # Output deliberately goes nowhere but the journal (R1.6): stdout and stderr are
 # journald-bound by default under the user manager, so no StandardOutput= or

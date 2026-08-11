@@ -58,13 +58,28 @@ The unit turns the script's verdict into a unit state:
 | Exit | Meaning | `systemctl --user status` |
 |------|---------|---------------------------|
 | 0 | Clean and current | success |
-| 1 | Updates or vulnerabilities found | success (declared via `SuccessExitStatus=1`) |
-| 2 | A scanner itself errored | **failed** |
+| 1 | Updates or vulnerabilities found | **failed** |
+| 2 | The check could not see everything | **failed** |
 
-Exit `1` is a routine outcome — a normal week where something has a newer
-version — so it is not treated as a malfunction. The findings are in the
-journal, not in the unit state. Exit `2` means the check could not be trusted to
-have run, and that does surface as a failure.
+Exit `1` is a real failure of the unit, not a routine outcome. The check reports
+through two channels — the JSON in the journal and the exit status — and the
+unit used to declare `1` successful, which switched the second channel off: a
+week with an available update looked exactly like a clean week. Something needs
+doing, so the unit says so.
+
+Expect this unit to be red often. After a findings run it stays listed in
+`systemctl --user --failed` until the next run clears it, or until you run:
+
+```bash
+systemctl --user reset-failed dep-check.service
+```
+
+The timer keeps firing on schedule regardless of the failed state, so a red unit
+never blocks the next check. The remedy is almost always `bun update`.
+
+Exit `2` means coverage was partial — a scanner was missing or errored, or the
+freshness half could not complete — so the tree is not certified clean. An
+offline run lands here: unknown is not clean.
 
 ## Schedule
 

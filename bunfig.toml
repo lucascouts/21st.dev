@@ -10,10 +10,14 @@
 #
 # This is a rolling quarantine, NOT a version pin, and it only applies when a
 # dependency is actually resolved — versions already recorded in bun.lock are
-# left untouched. It therefore does nothing about a lockfile that simply ages:
+# left as they are. It therefore does nothing about a lockfile that simply ages:
 # the resolved tree drifts behind while package.json still looks healthy, which
 # is how the known CVEs accumulated. Staleness is covered instead by
-# scripts/dep-check.sh, which re-resolves and scans the tree on a schedule.
+# scripts/dep-check.sh, which on a schedule re-resolves the tree in an isolated
+# copy outside the working tree and diffs the result, leaving the repository
+# lockfile unchanged. That copy carries this file, so every update it reports is
+# one a real install would take today rather than one the quarantine still
+# withholds.
 #
 # `minimumReleaseAgeExcludes` would exempt named packages from the age gate.
 # Left unset deliberately — the conservative default; reach for it only if the
