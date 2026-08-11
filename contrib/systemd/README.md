@@ -58,7 +58,7 @@ The unit turns the script's verdict into a unit state:
 | Exit | Meaning | `systemctl --user status` |
 |------|---------|---------------------------|
 | 0 | Clean and current | success |
-| 1 | Updates or vulnerabilities found | **failed** |
+| 1 | Findings: updates, vulnerabilities, or lockfile drift | **failed** |
 | 2 | The check could not see everything | **failed** |
 
 Exit `1` is a real failure of the unit, not a routine outcome. The check reports
@@ -66,6 +66,23 @@ through two channels — the JSON in the journal and the exit status — and the
 unit used to declare `1` successful, which switched the second channel off: a
 week with an available update looked exactly like a clean week. Something needs
 doing, so the unit says so.
+
+Three counts in the `summary` line say which finding it was, and at least one of
+them is non-zero on every exit `1`:
+
+| Field | What it found |
+|-------|---------------|
+| `vulnerabilities` | A scanner reported a known CVE. |
+| `outdated_count` | A recorded version moved: the re-resolution produced a newer one. |
+| `unmatched_count` | A key exists in exactly one of the two lockfiles. |
+
+`unmatched_count` is not "something was published" — nothing was released and no
+version moved. It means the committed `bun.lock` and the tree a fresh resolution
+produces disagree about which keys exist at all, so one of them is describing a
+tree nobody has. The `unmatched` array in the `freshness` event names each key
+and the direction it is missing in: `recorded_only` (in `bun.lock`, gone from
+the re-resolution) or `resolved_only` (the reverse — typically a dependency
+declared in `package.json` without regenerating the lockfile).
 
 Expect this unit to be red often. After a findings run it stays listed in
 `systemctl --user --failed` until the next run clears it, or until you run:
@@ -75,7 +92,10 @@ systemctl --user reset-failed dep-check.service
 ```
 
 The timer keeps firing on schedule regardless of the failed state, so a red unit
-never blocks the next check. The remedy is almost always `bun update`.
+never blocks the next check. The remedy is almost always `bun update` — it takes
+the available updates and rewrites `bun.lock`, which is also what closes drift —
+followed by committing the rewritten lockfile, without which the next run
+reports the same keys again.
 
 Exit `2` means coverage was partial — a scanner was missing or errored, or the
 freshness half could not complete — so the tree is not certified clean. An

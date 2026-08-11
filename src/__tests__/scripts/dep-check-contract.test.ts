@@ -48,9 +48,12 @@ describe("dep-check documents the mechanism it actually uses", () => {
     expect(header).toMatch(/never touched|untouched|unchanged|byte-identical|writes nothing/i);
   });
 
-  it("shows the freshness event it now emits, coverage metric included", () => {
-    // examined_count is the field whose absence made 0-of-5 indistinguishable
-    // from 0-of-100. A reader of the header must see that it exists.
+  it("shows the freshness event it now emits, examined_count included", () => {
+    // `examined_count` is the number of rows read from the recorded lockfile.
+    // A report that says how much it read is what stops "found nothing" from
+    // being read as "there is nothing", whatever it managed to look at.
+    // What the field MEANS is pinned in `dep-check-field-contract.test.ts`
+    // (story 004, R3.2); all this asserts is that the header shows it at all.
     expect(header).toContain("examined_count");
   });
 

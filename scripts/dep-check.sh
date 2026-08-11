@@ -44,22 +44,39 @@
 # OUTPUT CONTRACT (stdout, one JSON object per line, summary always last)
 #   {"event":"scanner","scanner":"osv-scanner","status":"ok","vulnerabilities":0}
 #   {"event":"scanner","scanner":"trivy","status":"ok","vulnerabilities":0}
-#   {"event":"freshness","status":"ok","examined_count":100,"outdated_count":1,
+#   {"event":"freshness","status":"ok","examined_count":100,"compared_count":99,
+#    "outdated_count":1,
 #    "outdated":[{"name":"jose","key":"jose","scope":"transitive",
 #                 "current":"6.2.7","update":"6.2.8"}],
+#    "unmatched":[{"key":"body-parser/content-type","name":"content-type",
+#                  "direction":"recorded_only","recorded":"2.0.0"}],
 #    "not_taken":[{"name":"typescript","scope":"direct",
 #                  "current":"6.0.3","latest":"7.0.2"}]}
 #   {"event":"summary","exit_code":1,"vulnerabilities":0,"outdated_count":1,
-#    "scanners_errored":0,"freshness_status":"ok"}
+#    "unmatched_count":1,"scanners_errored":0,"freshness_status":"ok"}
 #
 #   The last two are wrapped above for reading; on the wire, one line each.
 #
+#   Read the two counts together: 100 rows read, 99 keys compared, and the
+#   difference is the one recorded-only entry beneath them. That subtraction is
+#   an invariant (004 R3.3) — where it fails, the report is describing a diff
+#   that did not happen.
+#
 #   FRESHNESS FIELDS
-#     examined_count  how many packages the freshness half actually looked at —
-#                     every row of `bun.lock`. Its absence is what let the
+#     examined_count  `$recorded | length` — rows read out of `bun.lock`, and
+#                     nothing beyond that. It counts what the diff started from,
+#                     never what the diff reached. Its absence is what let the
 #                     original defect ship: without it a reader cannot tell
 #                     0-of-5 from 0-of-100, so a query that saw five packages
 #                     looked exactly like a tree that was current.
+#     compared_count  `[$recorded[] | select($now[.key] != null)] | length` —
+#                     keys present in BOTH lockfiles, which is what the diff
+#                     could actually compare. It exists because `examined_count`
+#                     cannot answer that question: the two coincide only while
+#                     the key sets agree, and a check whose every input agreed
+#                     could not tell them apart. Subtract it from
+#                     `examined_count` and what remains is the recorded-only
+#                     unmatched count, exactly (004 R3.1, R3.3).
 #     outdated        what the re-resolution would move. `key` is the LOCKFILE
 #                     KEY, not always the name: a nested resolution carries a
 #                     path (`body-parser/content-type`), which is how one name
@@ -70,6 +87,20 @@
 #     outdated_count  the length of `outdated`, derived from it so the two can
 #                     never disagree. Non-zero is what makes an otherwise
 #                     complete run exit 1.
+#     unmatched       keys present in EXACTLY ONE lockfile — `$recorded_only +
+#                     $resolved_only`, the two set differences. Each entry
+#                     carries `key`, `name`, a `direction` of `recorded_only`
+#                     (in `bun.lock`, not produced by the re-resolution) or
+#                     `resolved_only` (the reverse), and only the version the
+#                     lockfile holding it records: the other side is OMITTED
+#                     rather than nulled, so nobody has to know whether a null
+#                     meant "absent" or "recorded as null". There is no `scope`
+#                     and no `latest` here, both deliberately — see the comment
+#                     above the `jq` filter for `scope`; `latest` would cost
+#                     one registry lookup per key to answer a question the key
+#                     sets have already answered. Nothing here is counted in
+#                     `outdated_count`, which keeps meaning "a version moved";
+#                     a non-empty array is a finding in itself (004 R2.4).
 #     not_taken       releases the registry publishes for a DECLARED dependency
 #                     that the re-resolution did not take (003 R1.6). Reported
 #                     but NOT counted as outdated, because outdated means "what
@@ -88,6 +119,10 @@
 #   scanners overlap, so it is a findings signal, not a deduplicated inventory;
 #   the per-scanner events carry the precise numbers. Summing never under-reports.
 #
+#   `summary.unmatched_count` is the length of `freshness.unmatched`, read back
+#   out of the encoded event rather than counted a second time in bash, so the
+#   count and the array it describes come from one place (004 R2.6).
+#
 # FAILURE REASONS ("reason" on an errored event)
 #   A caller that branches on `reason` needs the whole set written down. It is
 #   larger than the original design spelled out, deliberately: every failure that
@@ -105,9 +140,12 @@
 #              unreadable_count · jq_not_found_on_path
 #
 # EXIT CODES — precedence: 2 beats 1 beats 0
-#   0  clean and current: no vulnerabilities, no updates, both scanners ran and
-#      the freshness half completed (002 R1.4)
-#   1  at least one vulnerability or at least one available update (002 R1.3)
+#   0  clean and current: no vulnerabilities, no updates, the two lockfiles
+#      record the same keys, both scanners ran and the freshness half completed
+#      (002 R1.4)
+#   1  findings: at least one vulnerability, at least one available update, or
+#      at least one unmatched key: one present in exactly one of the two
+#      lockfiles (002 R1.3, 004 R2.4)
 #   2  incomplete: a scanner errored, or the freshness half errored, or the run
 #      ended before it could report — coverage was partial, so the tree is NOT
 #      certified clean (002 R1.5, 003 R1.8)
@@ -117,6 +155,11 @@
 #   errored freshness half exits 2 even when both scanners came back clean. An
 #   incomplete check reported as a passing one is the one failure this script
 #   exists to prevent.
+#
+#   An unmatched key belongs to 1, never to 2. Nothing about it is partial: the
+#   check saw both key sets, compared them and reported what it found. A tree
+#   that was fully covered and disagrees with itself is a finding, not a gap in
+#   coverage.
 #
 # OFFLINE — a run without network can never report clean
 #   Both the re-resolution and the registry lookups need the npm registry, so an
@@ -184,9 +227,13 @@ readonly TRIVY_COUNT_FILTER='[.Results[]?.Vulnerabilities[]?] | length'
 # which is how one name legitimately appears at two versions.
 readonly LOCK_ROW_SED='s/^[[:space:]]*"([^"]+)": \["([^"]+)".*/\1\t\2/p'
 
-# Running totals for the summary.
+# Running totals for the summary, initialised HERE at file scope rather than
+# where each is computed: `on_exit` formats them with `%d` and the trap can fire
+# before the code that would have set them ran at all, so an uninitialised name
+# would abort the cleanup itself under `set -u`. Same reason as `tmpdir` below.
 vulnerability_total=0
 outdated_total=0
+unmatched_total=0
 scanners_errored=0
 freshness_status="errored"
 summary_emitted=0
@@ -465,9 +512,38 @@ check_freshness() {
     # what identifies the resolution; `name` stays the human-facing package.
     #
     # `outdated_count` is derived from the array it describes, so the two can
-    # never disagree, and `examined_count` says how many packages were compared:
-    # without it, a zero out of 5 is indistinguishable from a zero out of 100 —
-    # which is precisely how the manifest-scoped defect shipped unnoticed.
+    # never disagree. `examined_count` is `$recorded | length`: the number of
+    # rows read out of `bun.lock`, and nothing more. Without it, a zero out of 5
+    # is indistinguishable from a zero out of 100 — precisely how the
+    # manifest-scoped defect shipped unnoticed. How much of that the diff
+    # reached is a DIFFERENT number and gets a different field,
+    # `compared_count`, the recorded rows whose key the re-resolution also
+    # produced. The two coincide only while the key sets agree, so reading
+    # either as the other is a claim about coverage nothing has checked
+    # (004 R3.1, R3.2); their difference is the recorded-only unmatched count,
+    # which is the invariant that keeps them honest (004 R3.3).
+    #
+    # `unmatched` is the pair of set differences — keys `bun.lock` holds that
+    # the re-resolution did not produce, and the reverse. The second half was
+    # unreachable by construction: the diff was a comprehension over `$recorded`
+    # with the resolved lockfile only as a lookup table, so a key present solely
+    # on the resolved side was never visited at all, and two lockfiles could
+    # disagree about which keys exist while the check reported
+    # `outdated_count: 0` and exited 0.
+    #
+    # `direction` is what tells the two halves apart, and it is why these
+    # entries carry no `scope`. For a recorded key `direct` means "you own the
+    # constraint". For a resolved-only key the identical predicate would mean
+    # "you declared it and your lockfile lacks it" — the same word for a
+    # different fact, which is the substitution this story exists to stop.
+    #
+    # The resolved side iterates `$resolved_rows`, the parsed rows bound once,
+    # never the `$now` lookup built from them. `$now` maps key -> version, so it
+    # carries no `name` — which every unmatched entry must report — and `add`
+    # keeps one value per key, making anything counted through it a count of
+    # distinct keys rather than of rows. Telling those two numbers apart is the
+    # whole point here; deriving one from a structure that cannot represent the
+    # difference would hand the defect straight back.
     #
     # `not_taken` compares each published release against the version the
     # RE-RESOLUTION produced, not against the recorded one: a release the tree is
@@ -499,7 +575,9 @@ check_freshness() {
                     | {key: .[0], name: .[1], version: .[2]} ];
 
         rows as $recorded
-        | ($resolved | rows | map({(.key): .version}) | add // {}) as $now
+        | ($resolved | rows) as $resolved_rows
+        | ($resolved_rows | map({(.key): .version}) | add // {}) as $now
+        | ($recorded | map({(.key): true}) | add // {}) as $recorded_keys
         | ($declared | split("\n") | map(select(length > 0))) as $direct
         | [ $recorded[]
             | . as $entry
@@ -510,6 +588,18 @@ check_freshness() {
                 scope:   (if $direct | index($entry.name) then "direct" else "transitive" end),
                 current: $entry.version,
                 update:  $update } ] as $outdated
+        | [ $recorded[]
+            | select($now[.key] == null)
+            | { key:       .key,
+                name:      .name,
+                direction: "recorded_only",
+                recorded:  .version } ] as $recorded_only
+        | [ $resolved_rows[]
+            | select($recorded_keys[.key] == null)
+            | { key:       .key,
+                name:      .name,
+                direction: "resolved_only",
+                resolved:  .version } ] as $resolved_only
         | [ $published
             | split("\n")[]
             | select(length > 0)
@@ -522,8 +612,10 @@ check_freshness() {
         | { event: "freshness",
             status: "ok",
             examined_count: ($recorded | length),
+            compared_count: ([ $recorded[] | select($now[.key] != null) ] | length),
             outdated_count: ($outdated | length),
             outdated: $outdated,
+            unmatched: ($recorded_only + $resolved_only),
             not_taken: $not_taken }
     '); then
         emit_freshness_errored "report_encoding_failed"
@@ -531,6 +623,34 @@ check_freshness() {
     fi
 
     if ! outdated_total=$(printf '%s' "$event" | jq '.outdated_count'); then
+        # A FAILED READ-BACK STILL ASSIGNS — the empty string, not the old value.
+        # Left there it reaches `--argjson outdated_count ""`, which jq rejects,
+        # so the summary encoder fails; and it reaches `on_exit`'s `printf '%d'`,
+        # which errors and, under `set -e`, aborts the trap BEFORE its own
+        # `exit "$EXIT_INCOMPLETE"`. The process would then exit 1 — findings —
+        # while the summary on stdout said 2. Resetting to 0 keeps the two
+        # agreeing. `freshness_status` is already "errored" on this path, which
+        # is the field that says the number is not to be trusted (004 R1.4).
+        outdated_total=0
+        emit_freshness_errored "report_encoding_failed"
+        return 0
+    fi
+
+    # Read back out of the encoded event for the same reason as the line above,
+    # never counted a second time in bash: the summary's `unmatched_count` and
+    # the `unmatched` array it describes then come from one place and can never
+    # disagree (004 R2.6).
+    #
+    # Both read-backs sit ahead of the "ok" status and the print, deliberately. A
+    # failure here has to leave the errored event as the ONLY freshness event on
+    # stdout; placed after either line, it would emit an "ok" freshness event and
+    # then an errored one, and an errored event carries no counts precisely
+    # because nothing above it is trustworthy.
+    if ! unmatched_total=$(printf '%s' "$event" | jq '.unmatched | length'); then
+        # Reset for the same reason as the read-back above, and the two must stay
+        # the same shape: a second read-back behaving differently from the first
+        # is precisely the drift this story exists to end.
+        unmatched_total=0
         emit_freshness_errored "report_encoding_failed"
         return 0
     fi
@@ -590,8 +710,8 @@ on_exit() {
         return 0
     fi
     log "the check ended before it could report; treating coverage as incomplete"
-    printf '{"event":"summary","exit_code":%d,"vulnerabilities":%d,"outdated_count":%d,"scanners_errored":%d,"freshness_status":"errored"}\n' \
-        "$EXIT_INCOMPLETE" "$vulnerability_total" "$outdated_total" "$scanners_errored"
+    printf '{"event":"summary","exit_code":%d,"vulnerabilities":%d,"outdated_count":%d,"unmatched_count":%d,"scanners_errored":%d,"freshness_status":"errored"}\n' \
+        "$EXIT_INCOMPLETE" "$vulnerability_total" "$outdated_total" "$unmatched_total" "$scanners_errored"
     exit "$EXIT_INCOMPLETE"
 }
 trap 'on_exit' EXIT
@@ -620,12 +740,14 @@ emit_summary_and_exit() {
         --argjson exit_code "$exit_code" \
         --argjson vulnerabilities "$vulnerability_total" \
         --argjson outdated_count "$outdated_total" \
+        --argjson unmatched_count "$unmatched_total" \
         --argjson scanners_errored "$scanners_errored" \
         --arg freshness_status "$freshness_status" \
         '{event: "summary",
           exit_code: $exit_code,
           vulnerabilities: $vulnerabilities,
           outdated_count: $outdated_count,
+          unmatched_count: $unmatched_count,
           scanners_errored: $scanners_errored,
           freshness_status: $freshness_status}'); then
         exit "$EXIT_INCOMPLETE"
@@ -647,7 +769,7 @@ main() {
             '{"event":"scanner","scanner":"osv-scanner","status":"errored","reason":"jq_not_found_on_path"}' \
             '{"event":"scanner","scanner":"trivy","status":"errored","reason":"jq_not_found_on_path"}' \
             '{"event":"freshness","status":"errored","reason":"jq_not_found_on_path"}' \
-            '{"event":"summary","exit_code":2,"vulnerabilities":0,"outdated_count":0,"scanners_errored":2,"freshness_status":"errored"}'
+            '{"event":"summary","exit_code":2,"vulnerabilities":0,"outdated_count":0,"unmatched_count":0,"scanners_errored":2,"freshness_status":"errored"}'
         exit "$EXIT_INCOMPLETE"
     fi
 
@@ -668,8 +790,18 @@ main() {
         log "coverage was partial — the tree is NOT certified clean"
         emit_summary_and_exit "$EXIT_INCOMPLETE"
     fi
-    if [[ "$vulnerability_total" -gt 0 || "$outdated_total" -gt 0 ]]; then
-        log "found ${vulnerability_total} vulnerability finding(s) and ${outdated_total} available update(s)"
+    # Precedence is statement order and nothing else: incomplete above, then
+    # findings, then clean.
+    #
+    # An unmatched key belongs to THIS branch, not the one above it (004 R2.4).
+    # It is a finding — the two lockfiles disagree on which keys exist — measured
+    # by a freshness half that ran to completion and said so. Moving it up would
+    # leave a summary reporting `freshness_status: "ok"` beside exit 2, which the
+    # header defines as a scanner or the freshness half having errored: partial
+    # coverage. Nothing here is partial; the check saw both key sets and reported
+    # what it saw.
+    if [[ "$vulnerability_total" -gt 0 || "$outdated_total" -gt 0 || "$unmatched_total" -gt 0 ]]; then
+        log "found ${vulnerability_total} vulnerability finding(s), ${outdated_total} available update(s) and ${unmatched_total} key(s) present in only one lockfile"
         emit_summary_and_exit "$EXIT_FINDINGS"
     fi
     log "clean and current"

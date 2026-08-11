@@ -41,14 +41,20 @@ import {
  *
  * Contract under test:
  *
- *   {"event":"freshness","status":"ok","examined_count":100,"outdated_count":1,
+ *   {"event":"freshness","status":"ok","examined_count":100,"compared_count":99,
+ *    "outdated_count":1,
  *    "outdated":[{"name":"jose","key":"jose","scope":"transitive",
- *                 "current":"6.2.7","update":"6.2.8"}]}
+ *                 "current":"6.2.7","update":"6.2.8"}],
+ *    "unmatched":[{"key":"body-parser/content-type","name":"content-type",
+ *                  "direction":"recorded_only","recorded":"2.0.0"}]}
  *   {"event":"freshness","status":"errored","reason":"<reason>"}
  *
- * `examined_count` is the guard against a coverage regression: it is the number
- * of packages the freshness half looked at, and it is the metric whose absence
- * made 0-of-5 indistinguishable from 0-of-100.
+ * `examined_count` is `($recorded | length)` — rows read out of `bun.lock`, and
+ * nothing beyond that. It is the guard against a coverage regression, because
+ * its absence made 0-of-5 indistinguishable from 0-of-100. It is NOT a measure
+ * of what the diff reached: that is `compared_count`, and story 004 R3.2 exists
+ * because this file, the script header and `CHANGELOG.md` each described the
+ * same number differently.
  */
 
 /** Every external binary is a fixture; see dep-check-harness.ts. */

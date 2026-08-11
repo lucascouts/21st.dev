@@ -76,6 +76,41 @@ Node.js entry point.
   exits non-zero both on findings and on a scanner it could not run — a skipped scan never
   reads as a clean one. Optional systemd user units in `contrib/systemd/` run it weekly.
   The quarantine gates what enters the tree; this catches what has aged in place.
+
+  Freshness covers the **whole resolved tree**, not just the five declared dependencies.
+  The check copies `package.json` (with `scripts` stripped) and `bunfig.toml` into a
+  temporary directory outside the working tree, re-resolves there with
+  `bun install --lockfile-only --ignore-scripts`, and diffs the result against `bun.lock`
+  keyed on the lockfile key — so a package that appears twice at different versions is not
+  read as phantom drift. Because `bunfig.toml` travels with the copy, every reported update
+  is one a real `bun install` would take today, cooldown included. This matters because
+  `bun outdated` walks `package.json` and therefore can never see a transitive package:
+  all five packages behind the CVEs remediated above are transitive, so the detector built
+  for them was blind to exactly them.
+
+  The `freshness` event reports `examined_count` (rows read from the recorded `bun.lock`,
+  and nothing beyond that), `compared_count` (keys present in *both* lockfiles — what the
+  diff could actually compare; subtract it from `examined_count` and what remains is
+  exactly the number of keys only `bun.lock` holds), `outdated` (entries carrying `key`,
+  `name`, `scope` as `direct`/`transitive`, `current` and `update`), `unmatched` (keys
+  present in exactly one of the two lockfiles, each carrying `key`, `name`, a `direction`
+  of `recorded_only` or `resolved_only`, and only the version the lockfile holding it
+  records) and `not_taken` (published releases the re-resolution did not take, direct
+  dependencies only, carrying `latest`). `not_taken` deliberately does not say *why* a
+  release was skipped — out of range and inside the 7-day quarantine are indistinguishable
+  to it. An offline run reports freshness as errored and exits 2: unknown is not clean.
+
+  An unmatched key is a **finding**, so it exits 1 alongside vulnerabilities and available
+  updates, and the summary counts it in `unmatched_count`. Nothing was published and no
+  version moved: the committed lockfile and a fresh resolution disagree about which keys
+  exist at all, which the check can only report because it now walks both key sets. It is
+  not exit 2 — coverage was complete, the tree simply disagrees with itself.
+
+- **Findings now fail the systemd unit.** `dep-check.service` no longer declares
+  `SuccessExitStatus=1`, so a run that finds updates, vulnerabilities or lockfile drift
+  registers as failed and appears in `systemctl --user --failed` until the next run or an
+  explicit `systemctl --user reset-failed`. The timer keeps firing regardless. The exit
+  code was declared as half of the reporting channel and was being silently swallowed.
 - **Bun floor raised to 1.3.0**, in both `engines.bun` and both `Dockerfile` stages. 1.3.0
   is the first release that honors `install.minimumReleaseAge`; every 1.2.x accepts the key
   in silence and applies no cooldown at all, so the previous `>=1.2.0` promised a guarantee
