@@ -8,9 +8,10 @@
 # `trivy` do on their own to reach the npm registry and their vulnerability
 # databases, which is inherent to those tools.
 #
-# Requirement IDs name their story, because both number their clauses R1.x:
-# `002` is supply-chain-durability, `003` is transitive-freshness-coverage.
-# Comments below the header cite 003.
+# Requirement IDs name their story, because all three number their clauses R1.x:
+# `002` is supply-chain-durability, `003` is transitive-freshness-coverage,
+# `004` is dep-check-report-integrity. A comment below the header names the
+# story it cites; an unqualified `R1.x` means 003.
 #
 # WHAT IT DOES
 #   1. Freshness (003 R1.1) — an isolated re-resolution, then a lockfile diff.
@@ -543,7 +544,21 @@ check_freshness() {
 # and the process would exit with an undocumented status, which a caller could
 # not distinguish from a clean run. Emit an honest "incomplete" report instead.
 # Uses printf with %d on already-validated integers, so it works even if jq is
-# what broke.
+# what broke — and a broken jq now actually arrives here. `emit_summary_and_exit`
+# below captures the encoded event and records it as emitted only once it has
+# been printed, so a failed encode leaves `summary_emitted` at 0 and this net
+# speaks, instead of being skipped by a flag set on its behalf (004 R1.1-R1.3).
+#
+# THE BEHAVIOUR CHANGE THAT ROUTING BUYS — written down rather than left to be
+# discovered. A run that was otherwise CLEAN but could not encode its summary now
+# exits 2 and reports `freshness_status: "errored"`, on the line after a
+# `freshness` event that said "ok". Before, it exited with the encoder's own
+# status — 5, in the reproduction — and reported nothing at all. The two values
+# are hard-coded here because this is the "ended before it could report" path: it
+# runs after an unknown failure and can honestly claim to know nothing about what
+# preceded it. Under this script's "unknown is not clean" posture that is the
+# right answer — the report itself failed, so coverage is not certified — but it
+# does mean the summary is stricter than the events above it, deliberately.
 #
 # What this does NOT cover, stated rather than implied: only EXIT is trapped, so
 # a signal that terminates the shell under its default disposition — SIGINT from
@@ -581,10 +596,27 @@ on_exit() {
 }
 trap 'on_exit' EXIT
 
+# Encode, print, record, exit — in that order. The order IS the fix; each step
+# below is placed where it is for a reason, and swapping any two reopens a hole.
+#
+# Capturing rather than letting jq write straight to stdout is not tidiness: an
+# encoder that dies mid-object leaves a FRAGMENT on the line, and the net above
+# would then append a complete summary after it, breaking the one-complete-JSON-
+# object-per-line contract the whole report rests on. A capture keeps that
+# fragment inside the variable, where it is discarded unread.
+#
+# Recording the summary as emitted only AFTER the printf is what keeps that net
+# armed. The flag says "stdout already carries a summary"; setting it before the
+# encode made it say so on the one path where stdout carried nothing (004 R1.1).
+#
+# A failed encode exits INCOMPLETE and says nothing more: the flag is still 0, so
+# the EXIT trap emits the hand-written summary on the way out. Repeating that
+# printf here would put two summaries on stdout.
 emit_summary_and_exit() {
     local exit_code="$1"
-    summary_emitted=1
-    jq -nc \
+    local event=""
+
+    if ! event=$(jq -nc \
         --argjson exit_code "$exit_code" \
         --argjson vulnerabilities "$vulnerability_total" \
         --argjson outdated_count "$outdated_total" \
@@ -595,7 +627,12 @@ emit_summary_and_exit() {
           vulnerabilities: $vulnerabilities,
           outdated_count: $outdated_count,
           scanners_errored: $scanners_errored,
-          freshness_status: $freshness_status}'
+          freshness_status: $freshness_status}'); then
+        exit "$EXIT_INCOMPLETE"
+    fi
+
+    printf '%s\n' "$event"
+    summary_emitted=1
     exit "$exit_code"
 }
 
@@ -604,6 +641,7 @@ main() {
     # own vocabulary rather than dying mid-report. Every value here is a literal.
     if ! command -v jq >/dev/null 2>&1; then
         log "jq is required to encode the report but is not on PATH"
+        # Flag before printf, unlike emit_summary_and_exit: no encoder to fail.
         summary_emitted=1
         printf '%s\n' \
             '{"event":"scanner","scanner":"osv-scanner","status":"errored","reason":"jq_not_found_on_path"}' \
