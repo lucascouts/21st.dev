@@ -152,6 +152,10 @@ function buildTools() {
     timeout: 1,
     maxFileSize: 1,
     maxBodySize: 1,
+    // Never used: no tool is executed by `tools/list`. Present because
+    // `Config` requires it — the confinement boundary has no default that
+    // silently widens.
+    allowedRoots: [process.cwd()],
     debug: false,
     canvas: false,
     github: false,

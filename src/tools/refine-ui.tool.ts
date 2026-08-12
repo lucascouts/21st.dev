@@ -57,7 +57,10 @@ This tool improves UI of components and returns redesigned version of the compon
       // Read file content with path validation and size check
       let fileContent: string;
       const pathValidator = new PathValidator();
-      const validation = await pathValidator.validate(absolutePathToRefiningFile, "/");
+      const validation = await pathValidator.validate(
+        absolutePathToRefiningFile,
+        this.config.allowedRoots
+      );
       if (!validation.valid || !validation.normalizedPath) {
         throw new Error(`Invalid file path: ${validation.error}`);
       }

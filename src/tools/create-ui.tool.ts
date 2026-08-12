@@ -31,6 +31,18 @@ interface CreateUiResponse {
   text: string;
 }
 
+/**
+ * The content of the caller's file, or the reason it must not be read.
+ *
+ * A refusal travels as a value rather than a throw so the caller reports it as
+ * itself. Routing it through the surrounding `catch` would answer a confinement
+ * failure with "check your API key", and a wrong explanation is barely better
+ * than the `catch {}` that used to give none at all.
+ */
+type FileReadOutcome =
+  | { readonly ok: true; readonly content: string }
+  | { readonly ok: false; readonly reason: string };
+
 export interface CreateUiToolDeps {
   httpClient: HttpClient;
   browserDetector: BrowserDetector;
@@ -77,6 +89,14 @@ After calling this tool, you must edit or add files to integrate the snippet int
 
         // Fall back to API but include the URL in case user wants to browse
         const apiResult = await this.fallbackToApi(message, searchQuery, absolutePathToCurrentFile);
+
+        // A failure is returned as itself. Rebuilding the response by hand below
+        // drops `isError`, which is how a refusal would reach the caller looking
+        // like a successful result; it would also splice markdown into
+        // `formatError`'s JSON payload and leave it unparseable.
+        if (apiResult.isError) {
+          return apiResult;
+        }
 
         // Prepend URL info to the response
         const urlInfo = `\n\n---\n**Browse components visually:** [Open 21st.dev Magic Chat](${url})\n---\n\n`;
@@ -149,25 +169,19 @@ After calling this tool, you must edit or add files to integrate the snippet int
     searchQuery: string,
     absolutePathToCurrentFile: string
   ): Promise<ToolResponse> {
-    try {
-      let fileContent = "";
-      try {
-        const pathValidator = new PathValidator();
-        const validation = await pathValidator.validate(absolutePathToCurrentFile, "/");
-        if (validation.valid && validation.normalizedPath) {
-          const file = Bun.file(validation.normalizedPath);
-          const exists = await file.exists();
-          if (exists) {
-            fileContent = await file.text();
-          }
-        }
-      } catch {
-        // ignore
-      }
+    const currentFile = await this.readCurrentFile(absolutePathToCurrentFile);
+    if (!currentFile.ok) {
+      return this.formatError(
+        `Cannot read the file at the given path: ${currentFile.reason}`,
+        this.errorCode("FILE_ACCESS_ERROR"),
+        { path: absolutePathToCurrentFile }
+      );
+    }
 
+    try {
       const { data, status, ok } = await this.httpClient.post<CreateUiResponse>(
         "/api/fetch-ui",
-        { message, searchQuery, fileContent }
+        { message, searchQuery, fileContent: currentFile.content }
       );
 
       if (!ok || !data?.text) {
@@ -187,6 +201,74 @@ After calling this tool, you must edit or add files to integrate the snippet int
         { originalError: errorMessage }
       );
     }
+  }
+
+  /**
+   * The file the caller wants changed, confined to `config.allowedRoots`.
+   *
+   * Shaped after the read in `refine-ui.tool.ts`: validate, refuse an invalid
+   * path, check existence, check `config.maxFileSize`, read. The size bound is
+   * that existing setting rather than a second one, so both tools stay on one
+   * knob (R3.4). Over the bound the file is refused, never truncated: half a
+   * file is still bytes on the wire the operator capped.
+   *
+   * One deliberate difference from `refine-ui`: a path INSIDE a root that does
+   * not exist yet is not a failure here. This tool builds a NEW component, so
+   * the file the snippet lands in may not exist; the call proceeds without file
+   * context and says so at `warn`. That is not the swallowed case — nothing
+   * left the boundary. Everything the boundary refuses (outside every root,
+   * traversal, a symlink leaving a root, over the size bound, an unreadable
+   * file) stops the call instead of shipping an empty `fileContent` in silence.
+   */
+  private async readCurrentFile(absolutePath: string): Promise<FileReadOutcome> {
+    try {
+      const pathValidator = new PathValidator();
+      const validation = await pathValidator.validate(absolutePath, this.config.allowedRoots);
+      if (!validation.valid || !validation.normalizedPath) {
+        // The validator names every refusal it makes; the fallback covers only a
+        // result with neither a reason nor a path, and must not invent a cause.
+        return this.refuseFile(absolutePath, validation.error ?? "the path could not be validated");
+      }
+
+      const file = Bun.file(validation.normalizedPath);
+      const exists = await file.exists();
+      if (!exists) {
+        // Empty content HERE is a confined path with nothing at it yet, announced
+        // — not the swallowed refusal this sub-task removes. Every refusal below
+        // returns `ok: false`, never an empty string.
+        this.logger.warn(
+          `No file at ${absolutePath}; building the component without file context`
+        );
+        return { ok: true, content: "" };
+      }
+
+      const fileSize = file.size;
+      if (fileSize > this.config.maxFileSize) {
+        return this.refuseFile(
+          absolutePath,
+          `file size (${fileSize} bytes) exceeds maximum allowed size (${this.config.maxFileSize} bytes)`
+        );
+      }
+
+      return { ok: true, content: await file.text() };
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      return this.refuseFile(absolutePath, errorMessage);
+    }
+  }
+
+  /**
+   * R3.3, both halves: the refusal is logged at `warn` NAMING the path, and
+   * returned so the caller is told. The path is what makes the line actionable
+   * — a warning that says only "invalid path" cannot be acted on, and this tool
+   * spent every released 2.x version proving that silence is worse still.
+   */
+  private refuseFile(
+    absolutePath: string,
+    reason: string
+  ): { readonly ok: false; readonly reason: string } {
+    this.logger.warn(`Refusing to read ${absolutePath}: ${reason}`);
+    return { ok: false, reason };
   }
 
   private formatResponse(prompt: string): string {
