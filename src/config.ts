@@ -30,6 +30,15 @@ const ConfigSchema = z.object({
   maxFileSize: z.number().int().positive().default(1_048_576),
   maxBodySize: z.number().int().positive().default(1_048_576),
   allowedRoots: z.array(AllowedRootSchema).nonempty().default([process.cwd()]),
+  /**
+   * Admit loopback origins on the callback server (R4.2).
+   *
+   * Opt-in, and `.optional()` rather than `.default(false)`: a zod default is a
+   * REQUIRED property in `z.infer`, which would break every existing `Config`
+   * literal. Absent means off — `CorsHandler` treats anything but an explicit
+   * `true` as "issuing service only".
+   */
+  allowLocalhostOrigin: z.boolean().optional(),
   debug: z.boolean().default(false),
   canvas: z.boolean().default(false),
   github: z.boolean().default(false),
@@ -51,6 +60,10 @@ function parseCliArgs(): Partial<Record<string, string | boolean>> {
     }
     if (arg === "--debug") {
       result.debug = true;
+      continue;
+    }
+    if (arg === "--allow-localhost-origin") {
+      result.allowLocalhostOrigin = true;
       continue;
     }
 
@@ -132,6 +145,11 @@ export function parseConfig(): Config {
         : process.env.ALLOWED_ROOTS != null
           ? splitRoots(process.env.ALLOWED_ROOTS)
           : [process.cwd()],
+    // Only an explicit opt-in widens the callback's origin check. Any other
+    // spelling of the environment variable — absent, `"1"`, `"yes"` — leaves it
+    // off, because a security boundary must not widen on an ambiguous value.
+    allowLocalhostOrigin:
+      (cli.allowLocalhostOrigin as boolean) ?? process.env.ALLOW_LOCALHOST_ORIGIN === "true",
     debug:
       (cli.debug as boolean) ?? process.env.DEBUG === "true",
     canvas: (cli.canvas as boolean) ?? false,

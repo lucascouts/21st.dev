@@ -64,7 +64,12 @@ describe("CallbackServer", () => {
 
     const response = await fetch(`http://127.0.0.1:${port}`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      // The issuing origin, sent explicitly. This test is about a POST
+      // RESOLVING the waiter; it used to omit `Origin` entirely and pass only
+      // because an absent origin was treated as permission — the R4.1 defect
+      // story 006 removes. Sending the origin a real browser would send keeps
+      // the test on its own subject.
+      headers: { "Content-Type": "application/json", Origin: "https://21st.dev" },
       body: JSON.stringify({ component: "Button", props: {} }),
     });
 

@@ -3,9 +3,20 @@ import { BaseTool, type ToolResponse } from "./base-tool.js";
 import type { BrowserDetector } from "../browser/detector.js";
 import type { Logger } from "../logger.js";
 import type { Config } from "../config.js";
-import { CallbackServer } from "../callback/callback-server.js";
+import { CallbackServer, payloadSnippet } from "../callback/callback-server.js";
 import { CorsHandler } from "../callback/cors.js";
 import { RateLimiter } from "../security/rate-limiter.js";
+
+/**
+ * What the client is told when this tool ITSELF failed.
+ *
+ * Not a `FailureKind`: `failure.ts` is the vocabulary a failed REMOTE CALL is
+ * reported in, and this tool makes no remote call at all — naming its own
+ * defect `network` would be a false report. Same wording as every other tool
+ * for the same event, so an agent meets one sentence for "the server broke, its
+ * log has the detail" rather than one per tool.
+ */
+const UNEXPECTED_FAILURE_MESSAGE = "the tool failed unexpectedly; the server log has the detail";
 
 const canvasUiSchema = z.object({
   message: z.string().describe("Full users message"),
@@ -54,6 +65,7 @@ Use when the user mentions /canvas, visual editor, or wants to design components
         cors: CorsHandler,
         rateLimiter: new RateLimiter(),
         logger: this.logger,
+        allowLocalhostOrigin: this.config.allowLocalhostOrigin,
       });
       const port = await server.start();
 
@@ -89,17 +101,21 @@ Use when the user mentions /canvas, visual editor, or wants to design components
         };
       }
 
+      // The payload's CONTENT, with no wrapper — this tool returns the design
+      // itself. What it must NOT return is the envelope around it: measured
+      // 2026-08-12, a callback of `{"text":"export const Card = …"}` reached
+      // the agent as that JSON object rather than as the snippet.
       return {
-        content: [{ type: "text" as const, text: result.data }],
+        content: [{ type: "text" as const, text: payloadSnippet(result.payload) }],
       };
     } catch (error) {
-      this.logger.error(`Canvas error:`, error);
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      return this.formatError(
-        "Failed to open canvas. Please try again.",
-        this.errorCode("CANVAS_ERROR"),
-        { originalError: errorMessage }
-      );
+      // Two audiences. The engine's message names this process's own internals
+      // and goes to the local log; the client gets a constant.
+      // `{ originalError: errorMessage }` is gone with it — a `catch` cannot
+      // tell an engine's string from one that started life in a remote
+      // response, and neither belongs in a client-facing payload (R2.2).
+      this.logger.error(`magic_component_canvas failed unexpectedly:`, error);
+      return this.formatError(UNEXPECTED_FAILURE_MESSAGE, this.errorCode("UNEXPECTED_ERROR"));
     }
   }
 }
