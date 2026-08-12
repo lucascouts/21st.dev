@@ -464,7 +464,7 @@ describe("sanitizeSvg — the function is total (R1, fail closed)", () => {
     "<svg",
     "<svg><",
     "</svg>",
-    "<svg> <script>alert(1)</script></svg>",
+    "<svg>\u0000<script>alert(1)</script></svg>",
     "<svg>".repeat(200),
   ];
 
