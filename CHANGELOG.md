@@ -5,6 +5,51 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Security
+
+- **SVG sanitization is parser-based** (`src/security/svg-sanitizer.ts`). Markup is parsed
+  with Bun's native `HTMLRewriter` and re-emitted from an explicit allowlist of elements and
+  attributes, replacing the regular-expression filter that 2.0.0 shipped. That filter was
+  bypassed by 14 of 15 measured payloads and, because `.replace()` runs once, could *construct*
+  a threat: removing an inner `<script>` joined the surrounding text into a working `<script>`
+  the input never contained. Seven HIGH code-scanning alerts pointed at it.
+- **The logo search response is validated** against a `zod` schema before any field is read.
+  A body that cannot satisfy the schema fails that one query and issues no request derived
+  from it. Only the consumed subset is described and unknown keys are tolerated, so an
+  upstream field addition stays a compatible change.
+- **The SVG fetch cannot reach internal hosts** (`src/security/url-guard.ts`). A URL is
+  fetched only when its scheme is `https` and its host is neither a loopback name nor an IP
+  literal in a loopback, link-local, private or reserved range. IPv4-mapped IPv6 is
+  normalised first, so `::ffff:127.0.0.1` is refused in every spelling.
+- **Redirects are followed manually, with the guard applied to every hop.** `fetch` defaults
+  to following redirects, which made the guard a check on a string rather than on the request
+  that leaves the process: a guard-approved host answering `302 Location:
+  http://169.254.169.254/…` reached cloud instance metadata. Chains are bounded at 5 hops and
+  relative locations are resolved before being guarded.
+- **The generated component name is derived by allowlist.** `logo.title` was interpolated into
+  a TypeScript identifier position, so a crafted title emitted a component carrying a live
+  `fetch(...)` call into the user's project.
+- **Text nodes escape `{` and `}` as well as `<` and `>`.** The sanitized SVG is interpolated
+  into a JSX source file, where `{` opens an expression container holding arbitrary JavaScript.
+- **A fail-closed sanitizer result is reported as a failure**, not as a found logo. An empty
+  or fully-rejected SVG previously produced `() => ()`, which does not parse.
+
+### Changed
+
+- The SVG sanitizer moved from `src/http/` to `src/security/`, beside `log-sanitizer`,
+  `path-validator`, `rate-limiter` and `shell-sanitizer`. Being the only sanitizer outside
+  that directory is part of why it went unreviewed.
+- Logo search entries are validated individually rather than as a whole array, so one
+  unusable entry no longer fails a query whose consumed entry is well-formed.
+
+### Removed
+
+- `src/http/svg-sanitizer.ts` and its two test files. The regex implementation is deleted
+  rather than deprecated — one left in the tree is one a future caller can import. All 11 of
+  its unit assertions were absorbed into the new test file first.
+
 ## [2.0.0] - 2026-08-10
 
 Full architectural refactor. **Breaking**: this release is Bun-only and drops every

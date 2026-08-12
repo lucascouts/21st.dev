@@ -68,11 +68,59 @@ be genuinely new, rather than guessing:
   present in only one of the two lockfiles.
 - **No network access in the test suite**, verified under a network namespace
   with no egress.
+- **Remote SVG is sanitized by parsing, not by pattern matching.** Fetched markup
+  is parsed with Bun's native `HTMLRewriter` and re-emitted from an explicit
+  allowlist of elements and attributes; anything not named is removed. An
+  allowlist can be reviewed, which is the property a denylist cannot offer. The
+  sanitizer is total and fails closed: a parser error yields empty output, never
+  the input.
+- **The follow-up SVG fetch is restricted by scheme and address range.** Only
+  `https` is issued, and never to a loopback name or to an IP literal in a
+  loopback, link-local, private or reserved range. Redirects are followed
+  manually with the same check applied to every hop, so the restriction governs
+  the request that leaves the process rather than the URL as written.
+- **The logo API response is validated before any field is read**, against a
+  schema describing only the fields actually consumed.
 
 ### Known limitations
 
 Named deliberately, because a policy that lists only strengths is a marketing
-document:
+document. The first group concerns the logo pipeline specifically:
+
+- **DNS rebinding is not defended against.** The host restriction examines the
+  URL as written. A hostname that passes the check and resolves to a private
+  address at connect time defeats it. Closing this requires resolving the name,
+  pinning the address and connecting to the pinned address, which `fetch` does
+  not expose.
+- **The `style` attribute is the weakest point of the sanitizer's allowlist.** It
+  is admitted because it appears in most real logos, and its value is checked by
+  allowlisting CSS property names and requiring every `url(...)` to be a
+  same-document fragment. The value side is otherwise unvalidated. Being certain
+  would need a CSS parser, which would breach the two-dependency posture above.
+- **`href` and `xlink:href` admit `https` URLs**, so a logo can reference an
+  external resource on `use`, `pattern` or `mask`. That is an outbound fetch from
+  whoever renders the logo — a tracking beacon, not code execution. Restricting
+  these to same-document fragments would close it and is a deliberate open
+  decision, not an oversight.
+- **NAT64 (`64:ff9b::/96`) is not treated as an embedded IPv4 address.** It
+  denotes one only through a translating gateway, and RFC 6052 permits
+  network-specific prefixes that no static list can enumerate; blocking only the
+  well-known prefix would claim a coverage it cannot deliver.
+- **The 30-second request timeout covers response headers, not the body.** The
+  timer is cleared once headers arrive, so a host that returns `200` and then
+  trickles its body indefinitely leaves that read without a deadline. Because the
+  batch waits for every query, one such response stalls the whole call, including
+  queries that already succeeded. Measured, and not yet fixed.
+- **A remote server's `statusText` and connection-error text reach the caller**
+  through the failed-query report. That text is chosen by the remote host and
+  lands in the context of an agent that writes code, and a URL carrying
+  credentials in its userinfo can leak them through the error message on the
+  *allowed* path. The refusal path is unaffected: its reasons are built from the
+  hostname alone. Measured, and not yet fixed.
+- **No response size cap.** A large body from an allowed host is buffered,
+  sanitized and returned.
+
+The rest concern the supply chain:
 
 - The dependency check compares each package's **key and `name@version`** and
   discards the rest of the lockfile row. A dependency that re-resolves to the
