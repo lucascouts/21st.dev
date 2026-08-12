@@ -81,6 +81,30 @@ be genuinely new, rather than guessing:
   the request that leaves the process rather than the URL as written.
 - **The logo API response is validated before any field is read**, against a
   schema describing only the fields actually consumed.
+- **Every remote response is validated, not cast.** The shared HTTP client takes
+  a required schema and returns a discriminated result whose failure branch
+  carries no data at all, so a body that did not satisfy its schema cannot reach
+  a caller. There is no overload without a schema: the unsafe call is not
+  expressible rather than merely discouraged.
+- **No remote-supplied text reaches the MCP client.** A failure is reported by a
+  name drawn from a closed set of seven, each mapped to a constant message with
+  no interpolation slot. A response body, an error message, a `statusText` and a
+  remote-chosen hostname all stop at the boundary; the detail goes to the local
+  log. Redaction of credential-shaped substrings was considered and rejected — a
+  denylist is narrower than the requirement exactly where nobody anticipated.
+- **Response bodies are size-bounded** against both the declared `content-length`
+  and the bytes actually accumulated, since the former is remote-supplied. The
+  request deadline covers the body read, not only the headers.
+- **Redirects may not leave the configured service origin**, checked on every hop.
+- **Tool file access is confined to a configured set of roots**, defaulting to the
+  working directory. The filesystem root can neither be configured nor passed to
+  the validator, and a refused path is reported to the caller and logged.
+- **The browser callback requires an `Origin` the allowlist accepts** — absence is
+  not permission — admits localhost only when explicitly opted in, and validates
+  the body against a schema before it can resolve anything. See the limitation
+  below for what this does and does not amount to.
+- **Every tool is executed through a real MCP client in the test suite**, not only
+  described in a `tools/list` contract check.
 
 ### Known limitations
 
@@ -106,19 +130,35 @@ document. The first group concerns the logo pipeline specifically:
   denotes one only through a translating gateway, and RFC 6052 permits
   network-specific prefixes that no static list can enumerate; blocking only the
   well-known prefix would claim a coverage it cannot deliver.
-- **The 30-second request timeout covers response headers, not the body.** The
-  timer is cleared once headers arrive, so a host that returns `200` and then
-  trickles its body indefinitely leaves that read without a deadline. Because the
-  batch waits for every query, one such response stalls the whole call, including
-  queries that already succeeded. Measured, and not yet fixed.
-- **A remote server's `statusText` and connection-error text reach the caller**
-  through the failed-query report. That text is chosen by the remote host and
-  lands in the context of an agent that writes code, and a URL carrying
-  credentials in its userinfo can leak them through the error message on the
-  *allowed* path. The refusal path is unaffected: its reasons are built from the
-  hostname alone. Measured, and not yet fixed.
-- **No response size cap.** A large body from an allowed host is buffered,
-  sanitized and returned.
+The next group concerns the browser callback:
+
+- **The callback is constrained by origin. It is not authenticated.** A request
+  must now carry an `Origin` the allowlist accepts, and its body must satisfy a
+  schema before it resolves anything — but any local process can set that header.
+  A process already executing as the user can therefore still answer the
+  callback. Authenticating it would need a secret echoed back by the page at
+  `21st.dev`: the outbound URL carries only `q`, `mcp` and `port`, and that page
+  builds the callback URL itself, so a nonce cannot be introduced from this side
+  alone. Requiring one unilaterally would refuse every legitimate callback, and
+  sending one while accepting its absence would be a check whose population does
+  not cover its requirement — which is the defect class this project keeps
+  finding. Stated as an open decision, not an oversight.
+- **A failed tool call leaves its loopback callback port bound** for the lifetime
+  of the process, because the server is constructed inside the `try` its own
+  error handler cannot reach. The port refuses everything the constraints above
+  refuse, and its waiter is already settled, so this is a resource leak on a
+  security-relevant surface rather than a way in. Measured.
+
+Two concern the local log rather than anything a caller sees:
+
+- **`LogSanitizer` does not redact a credential inside a JSON-serialized
+  object.** Its pattern requires the start of the string, whitespace, `=` or `:`
+  before the value, and JSON puts a `"` there, so `{"apiKey":"api_…"}` survives.
+  This applies to every object any call site logs. Measured.
+- **A URL carrying credentials in its userinfo can reach the log** through a
+  connection error's own `path` property. The URL guard checks scheme and host,
+  not userinfo. Nothing of this reaches a caller — remote text no longer crosses
+  that boundary at all — but it does reach the operator's log.
 
 The rest concern the supply chain:
 

