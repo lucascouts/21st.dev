@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { BaseTool, type ToolResponse } from "./base-tool.js";
 import type { Logger } from "../logger.js";
-import { sanitizeSvg } from "../http/svg-sanitizer.js";
+import { sanitizeSvg } from "../security/svg-sanitizer.js";
 
 const CONCURRENCY_LIMIT = 5;
 
@@ -105,7 +105,10 @@ Format options:
     const response = await this.fetchWithTimeout(url);
     if (!response.ok) throw new Error(`Failed to fetch SVG: ${response.statusText}`);
     const rawSvg = await response.text();
-    return sanitizeSvg(rawSvg);
+    // The logger is passed so the sanitizer's debug-level count of what it
+    // removed is actually emitted: the tool's own output is unchanged when
+    // content is stripped, so this log is the only trace a maintainer gets.
+    return await sanitizeSvg(rawSvg, this.logger);
   }
 
   private convertToFormat(svgContent: string, format: "JSX" | "TSX" | "SVG", name: string): string {
