@@ -84,7 +84,7 @@ export class HealthCheckTool extends BaseTool<typeof healthCheckSchema> {
     try {
       const startTime = Date.now();
 
-      const { ok, status } = await this.httpClient.get<unknown>("/health");
+      const { ok, status } = await this.httpClient.get("/health", z.unknown());
 
       const latency = Date.now() - startTime;
 

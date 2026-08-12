@@ -1,6 +1,8 @@
 import { z } from "zod";
 import { BaseTool, type ToolResponse } from "./base-tool.js";
 import type { HttpClient } from "../http/client.js";
+import { textResponseSchema } from "../http/api-response.js";
+import { FAILURE_MESSAGES, failureLogDetail } from "../http/failure.js";
 import type { BrowserDetector } from "../browser/detector.js";
 import type { Logger } from "../logger.js";
 import type { Config } from "../config.js";
@@ -26,10 +28,6 @@ const createUiSchema = z.object({
       "You need to formulate what component user wants to create, based on his message, possbile chat histroy and a place where he makes the request. Extract additional context about what should be done to create a ui component/page based on the user's message, search query, and conversation history, files. Don't halucinate and be on point."
     ),
 });
-
-interface CreateUiResponse {
-  text: string;
-}
 
 /**
  * The content of the caller's file, or the reason it must not be read.
@@ -179,26 +177,45 @@ After calling this tool, you must edit or add files to integrate the snippet int
     }
 
     try {
-      const { data, status, ok } = await this.httpClient.post<CreateUiResponse>(
+      const result = await this.httpClient.post(
         "/api/fetch-ui",
-        { message, searchQuery, fileContent: currentFile.content }
+        { message, searchQuery, fileContent: currentFile.content },
+        textResponseSchema
       );
 
-      if (!ok || !data?.text) {
-        throw new Error(`API returned status ${status}`);
+      // `!data?.text` is gone from this condition because the schema now decides
+      // it: `ok` cannot be true unless `text` is a string. That also ends the
+      // measured coercion — `{text:123}` reaching the agent as `"123"`.
+      if (!result.ok) {
+        // Two audiences, per failure.ts. The log gets which call ended and its
+        // remote-chosen status; the client gets the constant for the kind, plus
+        // the kind itself — a name from a closed set an agent can branch on
+        // (R2.1). Nothing remote is interpolated into either (R2.2).
+        this.logger.error(
+          failureLogDetail(result.kind, `POST /api/fetch-ui (status ${result.status})`)
+        );
+        return this.formatError(FAILURE_MESSAGES[result.kind], this.errorCode("API_ERROR"), {
+          kind: result.kind,
+        });
       }
 
       this.logger.info(`Got result from API fallback`);
       return {
-        content: [{ type: "text" as const, text: this.formatResponse(data.text) }],
+        content: [{ type: "text" as const, text: this.formatResponse(result.data.text) }],
       };
     } catch (error) {
-      this.logger.error(`API fallback error:`, error);
-      const errorMessage = error instanceof Error ? error.message : String(error);
+      // Unreachable by `HttpClient`'s contract: it RETURNS its failures rather
+      // than throwing them, and the file read above has already returned. Kept
+      // so a local fault is still REPORTED — an error escaping `execute`
+      // reaches the agent as a JSON-RPC error with no `isError` and no tool
+      // content, the same class of defect as the -32602 this sub-task closes,
+      // arriving by a different door. The engine string is logged and never
+      // returned: `FailureKind` names REMOTE-call failures, and none of them is
+      // "our own defect".
+      this.logger.error(`magic_component_builder failed unexpectedly:`, error);
       return this.formatError(
-        "Failed to create component. Please try again or check your API key.",
-        this.errorCode("API_ERROR"),
-        { originalError: errorMessage }
+        "the tool failed unexpectedly; the server log has the detail",
+        this.errorCode("UNEXPECTED_ERROR")
       );
     }
   }

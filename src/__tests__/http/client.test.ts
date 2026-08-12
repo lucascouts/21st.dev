@@ -1,4 +1,5 @@
 import { describe, it, expect, afterEach } from "bun:test";
+import { z } from "zod";
 import { HttpClient } from "../../http/client.js";
 
 const mockLogger = {
@@ -53,7 +54,7 @@ describe("HttpClient", () => {
     servers.push(server);
 
     const client = createClient(`http://127.0.0.1:${server.port}`, "my-secret-key");
-    await client.get("/test");
+    await client.get("/test", z.unknown());
 
     expect(receivedAuth).toBe("Bearer my-secret-key");
   });
@@ -81,7 +82,7 @@ describe("HttpClient", () => {
       logger: mockLogger as any,
     });
 
-    const result = await client.get("/missing");
+    const result = await client.get("/missing", z.unknown());
     expect(result.ok).toBe(false);
     expect(result.status).toBe(404);
     expect(requestCount).toBe(1);

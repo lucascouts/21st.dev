@@ -17,6 +17,9 @@ const httpClient = new HttpClient({
   baseUrl: config.debug ? "http://localhost:3005" : "https://magic.21st.dev",
   apiKey: config.apiKey,
   timeout: config.timeout,
+  // The bound an operator already has a knob for (`MAX_BODY_SIZE`), rather than
+  // a second setting invented for the same job.
+  maxBodySize: config.maxBodySize,
   retry: {
     maxRetries: 3,
     baseDelay: 1_000,
